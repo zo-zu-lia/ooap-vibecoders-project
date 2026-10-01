@@ -1,0 +1,1936 @@
+# OpenAPI 3.0.3 contract — FileFlow (MVP)
+# This is a design specification, not an implemented service.
+openapi: 3.0.3
+info:
+  title: FileFlow — внутрішній корпоративний файловий сервіс
+  version: 1.0.0
+  description: Проєктний контракт REST API для MVP однієї компанії. Доступ тільки через корпоративну BFF-сесію.
+    Вміст файлів передається безпосередньо до приватного S3-сумісного сховища за короткоживучими підписаними URL.
+    Усі URL, домени й ідентифікатори в прикладах вигадані.
+servers:
+- url: https://files.example.corp/api/v1
+  description: Умовна адреса корпоративного розгортання (приклад, не реальний сервер)
+security:
+- SessionCookie: []
+tags:
+- name: Identity
+  description: Сесія та користувач
+- name: Workspace
+  description: Робочі простори, папки та політики
+- name: Uploads
+  description: Завантаження частинами
+- name: Files
+  description: Файли, версії та кошик
+- name: Access
+  description: Права й внутрішні посилання
+- name: Search
+  description: Пошук метаданих
+- name: Audit
+  description: Журнал аудиту
+paths:
+  /me:
+    get:
+      tags:
+      - Identity
+      summary: Поточний користувач
+      description: Повертає локальну проєкцію корпоративної особи; не є endpoint входу.
+      operationId: get_me
+      responses:
+        '200':
+          description: Поточний користувач.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /logout:
+    post:
+      tags:
+      - Identity
+      summary: Завершити сесію
+      description: Скасовує серверну сесію та очищує session cookie.
+      operationId: post_logout
+      responses:
+        '204':
+          description: Сеанс завершено.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/Csrf'
+  /workspaces:
+    get:
+      tags:
+      - Workspace
+      summary: Доступні простори
+      description: Повертає лише робочі простори, доступні через членство й корпоративні групи.
+      operationId: get_workspaces
+      responses:
+        '200':
+          description: Перелік просторів.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /workspaces/{workspaceId}/items:
+    get:
+      tags:
+      - Workspace
+      summary: Вміст папки
+      description: За відсутності parentId повертає корінь простору; сортування за іменем. Повертає лише доступні
+        об’єкти.
+      operationId: get_workspaces_workspaceId_items
+      responses:
+        '200':
+          description: Список папок та файлів.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+                  nextCursor:
+                    type: string
+                    nullable: true
+                required:
+                - items
+                - nextCursor
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - name: parentId
+        in: query
+        required: false
+        description: Батьківська папка; відсутній параметр означає корінь.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/Cursor'
+  /workspaces/{workspaceId}/folders:
+    post:
+      tags:
+      - Workspace
+      summary: Створити папку
+      description: Доступ EDITOR або OWNER; назва унікальна серед дочірніх об’єктів.
+      operationId: post_workspaces_workspaceId_folders
+      responses:
+        '201':
+          description: Папку створено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parentId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+              required:
+              - name
+  /workspaces/{workspaceId}/policy:
+    get:
+      tags:
+      - Workspace
+      summary: Прочитати політику простору
+      description: Керівник простору бачить чинні значення квоти та retention.
+      operationId: get_workspaces_workspaceId_policy
+      responses:
+        '200':
+          description: Поточна політика.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+    put:
+      tags:
+      - Workspace
+      summary: Оновити квоту й retention
+      description: Тільки системний адміністратор. Нова політика retention діє для майбутніх soft-delete; purgeAt
+        уже видалених файлів не перераховується.
+      operationId: put_workspaces_workspaceId_policy
+      responses:
+        '200':
+          description: Політику оновлено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/Csrf'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Policy'
+  /folders/{folderId}/uploads:
+    post:
+      tags:
+      - Uploads
+      summary: Почати створення файла
+      description: Створює сесію multipart upload для нового файла; байти клієнт передає у сховище напряму.
+      operationId: post_folders_folderId_uploads
+      responses:
+        '201':
+          description: Сесію створено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/FolderId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                sizeBytes:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  maximum: 2147483648
+                sha256:
+                  type: string
+                  pattern: ^[a-fA-F0-9]{64}$
+                contentType:
+                  type: string
+                  maxLength: 200
+              required:
+              - name
+              - sizeBytes
+              - sha256
+              - contentType
+  /files/{fileId}/uploads:
+    post:
+      tags:
+      - Uploads
+      summary: Почати створення нової версії
+      description: expectedVersionNo — відома клієнту версія для optimistic concurrency; остаточне порівняння здійснюється
+        атомарно на complete.
+      operationId: post_files_fileId_uploads
+      responses:
+        '201':
+          description: Сесію для нової версії створено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersionNo:
+                  type: integer
+                  minimum: 1
+                sizeBytes:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  maximum: 2147483648
+                sha256:
+                  type: string
+                  pattern: ^[a-fA-F0-9]{64}$
+                contentType:
+                  type: string
+                  maxLength: 200
+              required:
+              - expectedVersionNo
+              - sizeBytes
+              - sha256
+              - contentType
+  /uploads/{uploadId}/parts/{partNumber}/url:
+    get:
+      tags:
+      - Uploads
+      summary: Отримати URL частини
+      description: Повертає PUT URL на конкретний номер частини тільки для власника сесії. Підписаний URL живе до
+        15 хвилин; байти не йдуть через API.
+      operationId: get_uploads_uploadId_parts_partNumber_url
+      responses:
+        '200':
+          description: Параметри завантаження частини.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedPart'
+          headers:
+            Cache-Control:
+              description: Відповідь з URL заборонено кешувати
+              schema:
+                type: string
+                example: no-store
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+      - $ref: '#/components/parameters/PartNumber'
+  /uploads/{uploadId}/complete:
+    post:
+      tags:
+      - Uploads
+      summary: Завершити multipart upload
+      description: Перевіряє склад частин, атомарно резервує номер нової версії (CAS), зберігає PENDING_SCAN і задачу
+        сканування. Після 202 опитуйте GET /uploads/{uploadId}; це НЕ означає, що файл уже доступний.
+      operationId: post_uploads_uploadId_complete
+      responses:
+        '202':
+          description: Версію створено в стані PROCESSING; AV і SHA-256 ще не завершено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      partNumber:
+                        type: integer
+                        minimum: 1
+                      etag:
+                        type: string
+                        minLength: 1
+                    required:
+                    - partNumber
+                    - etag
+              required:
+              - parts
+  /uploads/{uploadId}:
+    get:
+      tags:
+      - Uploads
+      summary: Стан завантаження
+      description: Після сканування повертає READY або REJECTED та відповідний errorCode; 200 описує стан, а не
+        успіх доменної операції.
+      operationId: get_uploads_uploadId
+      responses:
+        '200':
+          description: Поточний стан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+  /workspaces/{workspaceId}/trash:
+    get:
+      tags:
+      - Workspace
+      summary: Показати кошик робочого простору
+      description: Повертає TRASHED файли з часом видалення і інформацією для recovery. Доступ тільки користувачам
+        з відповідними правами.
+      operationId: get_workspaces_workspaceId_trash
+      responses:
+        '200':
+          description: Файли в кошику.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/File'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+  /files/{fileId}:
+    get:
+      tags:
+      - Files
+      summary: Метадані файла
+      description: Включає latestVersionNo та downloadableVersionNo, що можуть різнитися під час сканування чи карантину.
+      operationId: get_files_fileId
+      responses:
+        '200':
+          description: Метадані файла.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/File'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+    delete:
+      tags:
+      - Files
+      summary: Перемістити файл у кошик
+      description: Soft-delete. Негайно забороняє видачу нових signed URL і відкликає share links. purgeAt обчислюється
+        з актуальної політики.
+      operationId: delete_files_fileId
+      responses:
+        '204':
+          description: Файл у кошику.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/Csrf'
+  /files/{fileId}/versions:
+    get:
+      tags:
+      - Files
+      summary: Історія версій
+      description: Включає PENDING_SCAN та REJECTED без надання URL їхнього вмісту.
+      operationId: get_files_fileId_versions
+      responses:
+        '200':
+          description: Список версій.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Version'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+  /files/{fileId}/versions/{versionNo}/restore:
+    post:
+      tags:
+      - Files
+      summary: Відновити попередню версію
+      description: Для CLEAN версії створює новий незмінний запис, що посилається на вже перевірений об’єкт. Перевіряє
+        expectedVersionNo в транзакції.
+      operationId: post_files_fileId_versions_versionNo_restore
+      responses:
+        '201':
+          description: Нову поточну версію створено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/VersionNo'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersionNo:
+                  type: integer
+                  minimum: 1
+              required:
+              - expectedVersionNo
+  /files/{fileId}/download-link:
+    get:
+      tags:
+      - Files
+      summary: Отримати посилання на завантаження
+      description: Повертає короткоживучий GET URL лише для останньої CLEAN версії. При зміні ACL раніше виданий
+        URL залишається придатним до завершення TTL (максимум 60 с).
+      operationId: get_files_fileId_download_link
+      responses:
+        '200':
+          description: Підписаний URL тільки для читання.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadLink'
+          headers:
+            Cache-Control:
+              description: Відповідь з URL заборонено кешувати
+              schema:
+                type: string
+                example: no-store
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+  /files/{fileId}/recover:
+    post:
+      tags:
+      - Files
+      summary: Відновити файл із кошика
+      description: Можливо лише до старту PURGING і лише у межах retention.
+      operationId: post_files_fileId_recover
+      responses:
+        '200':
+          description: Файл відновлено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/File'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+  /files/{fileId}/legal-hold:
+    patch:
+      tags:
+      - Files
+      summary: Встановити чи зняти legal hold
+      description: Тільки security admin. Legal hold блокує незворотне фізичне видалення, але не є дозволом читати
+        файл.
+      operationId: patch_files_fileId_legal_hold
+      responses:
+        '200':
+          description: Статус legal hold оновлено.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileId:
+                    type: string
+                    format: uuid
+                  legalHold:
+                    type: boolean
+                required:
+                - fileId
+                - legalHold
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/Csrf'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                legalHold:
+                  type: boolean
+              required:
+              - legalHold
+  /files/{fileId}/permissions:
+    get:
+      tags:
+      - Access
+      summary: Список явних файлових дозволів
+      description: Повертає тільки явні персональні правила цього файла, без успадкованого членства/груп.
+      operationId: get_files_fileId_permissions
+      responses:
+        '200':
+          description: Прямі дозволи.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PermissionEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+  /files/{fileId}/permissions/{userId}:
+    put:
+      tags:
+      - Access
+      summary: Надати права працівнику
+      description: OWNER простору/файла призначає VIEWER або EDITOR; роль власника так не передається. Доступ також
+        може походити з workspace membership.
+      operationId: put_files_fileId_permissions_userId
+      responses:
+        '200':
+          description: Правило доступу збережено.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileId:
+                    type: string
+                    format: uuid
+                  userId:
+                    type: string
+                    format: uuid
+                  role:
+                    type: string
+                    enum:
+                    - VIEWER
+                    - EDITOR
+                required:
+                - fileId
+                - userId
+                - role
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/UserId'
+      - $ref: '#/components/parameters/Csrf'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum:
+                  - VIEWER
+                  - EDITOR
+              required:
+              - role
+    delete:
+      tags:
+      - Access
+      summary: Прибрати персональне правило
+      description: Видаляє лише явне файлове правило; успадкований груповий/просторовий доступ цим не скасовується.
+      operationId: delete_files_fileId_permissions_userId
+      responses:
+        '204':
+          description: Персональне правило видалено.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/UserId'
+      - $ref: '#/components/parameters/Csrf'
+  /files/{fileId}/share-links:
+    get:
+      tags:
+      - Access
+      summary: Переглянути внутрішні посилання
+      description: OWNER бачить список посилань без секретного bearer token; url повторно не повертається.
+      operationId: get_files_fileId_share_links
+      responses:
+        '200':
+          description: Інформація про створені посилання.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShareLinkSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+    post:
+      tags:
+      - Access
+      summary: Створити внутрішнє посилання
+      description: Посилання призначене конкретному працівнику тієї самої компанії; встановлює тимчасове право тільки
+        на читання, до 7 діб.
+      operationId: post_files_fileId_share_links
+      responses:
+        '201':
+          description: Внутрішнє посилання створено. URL з токеном повертається лише під час створення.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/Csrf'
+      - $ref: '#/components/parameters/Idempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipientUserId:
+                  type: string
+                  format: uuid
+                expiresInHours:
+                  type: integer
+                  minimum: 1
+                  maximum: 168
+              required:
+              - recipientUserId
+              - expiresInHours
+  /share-links/{shareLinkId}:
+    delete:
+      tags:
+      - Access
+      summary: Відкликати внутрішнє посилання
+      description: Негайно блокує майбутні виклики resolve; вже видані URL сховища залишаються чинними до 60 с.
+      operationId: delete_share_links_shareLinkId
+      responses:
+        '204':
+          description: Посилання відкликано.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - $ref: '#/components/parameters/ShareLinkId'
+      - $ref: '#/components/parameters/Csrf'
+  /share-links/resolve:
+    post:
+      tags:
+      - Access
+      summary: Відкрити внутрішнє посилання
+      description: Токен передається в тілі, а не query string API; лише адресат, який пройшов корпоративну автентифікацію,
+        отримує CLEAN версію.
+      operationId: post_share_links_resolve
+      responses:
+        '200':
+          description: Дані файла й короткоживуче посилання.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareResolution'
+          headers:
+            Cache-Control:
+              description: Відповідь з URL заборонено кешувати
+              schema:
+                type: string
+                example: no-store
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      parameters:
+      - $ref: '#/components/parameters/Csrf'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  minLength: 20
+                  maxLength: 512
+              required:
+              - token
+  /search:
+    get:
+      tags:
+      - Search
+      summary: Пошук файлів за назвою
+      description: Пошук тільки серед метаданих і файлів з чинними ACL у визначеному робочому просторі; вміст документів
+        не індексується.
+      operationId: get_search
+      responses:
+        '200':
+          description: Результати пошуку.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/File'
+                  nextCursor:
+                    type: string
+                    nullable: true
+                required:
+                - items
+                - nextCursor
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - name: workspaceId
+        in: query
+        required: true
+        description: Простір пошуку.
+        schema:
+          type: string
+          format: uuid
+      - name: q
+        in: query
+        required: true
+        description: Фрагмент назви від 2 символів.
+        schema:
+          type: string
+          minLength: 2
+          maxLength: 128
+      - $ref: '#/components/parameters/Cursor'
+  /audit-events:
+    get:
+      tags:
+      - Audit
+      summary: Читати журнал аудиту
+      description: Лише security admin; журнал має append-only записи без токенів і вмісту документів.
+      operationId: get_audit_events
+      responses:
+        '200':
+          description: Сторінка журналу.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEvent'
+                  nextCursor:
+                    type: string
+                    nullable: true
+                required:
+                - items
+                - nextCursor
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      parameters:
+      - name: workspaceId
+        in: query
+        required: false
+        description: Необов’язковий фільтр за простором.
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/Cursor'
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-fileflow_session
+      description: Безпечна httpOnly SameSite=Lax cookie; встановлюється бекендом після OIDC Authorization Code
+        + PKCE. Логін/колбек OIDC — браузерні маршрути, не частина JSON API.
+  parameters:
+    Csrf:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: CSRF-токен BFF-сесії для операцій зміни стану.
+      schema:
+        type: string
+    Idempotency:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Унікальний ключ запиту (UUID); відповідь повторюється протягом 24 годин для того ж запиту.
+      schema:
+        type: string
+        format: uuid
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      description: Ідентифікатор робочого простору.
+      schema:
+        type: string
+        format: uuid
+    FolderId:
+      name: folderId
+      in: path
+      required: true
+      description: Ідентифікатор папки.
+      schema:
+        type: string
+        format: uuid
+    FileId:
+      name: fileId
+      in: path
+      required: true
+      description: Ідентифікатор файла.
+      schema:
+        type: string
+        format: uuid
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      description: Ідентифікатор сесії завантаження.
+      schema:
+        type: string
+        format: uuid
+    ShareLinkId:
+      name: shareLinkId
+      in: path
+      required: true
+      description: Ідентифікатор внутрішнього посилання.
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: Ідентифікатор працівника з корпоративного каталогу.
+      schema:
+        type: string
+        format: uuid
+    VersionNo:
+      name: versionNo
+      in: path
+      required: true
+      description: Номер версії файла (від 1).
+      schema:
+        type: integer
+        minimum: 1
+    PartNumber:
+      name: partNumber
+      in: path
+      required: true
+      description: Номер частини multipart upload (від 1 до partCount).
+      schema:
+        type: integer
+        minimum: 1
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Непрозорий курсор сторінки.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Некоректний JSON, параметр або схема запиту.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            BadRequest:
+              summary: Bad Request
+              value:
+                type: https://docs.example.corp/problems/bad-request
+                title: Bad Request
+                status: 400
+                detail: Некоректний JSON, параметр або схема запиту.
+                code: BAD_REQUEST
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            ValidationFailed:
+              summary: Некоректне поле запиту
+              value:
+                type: https://docs.example.corp/problems/validation-failed
+                title: Bad Request
+                status: 400
+                detail: Поле sizeBytes не відповідає обмеженням.
+                code: VALIDATION_FAILED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+                invalidParams:
+                - name: sizeBytes
+                  reason: Максимум 2147483648 байтів
+    Unauthorized:
+      description: Необхідна чинна корпоративна сесія.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            Unauthorized:
+              summary: Unauthenticated
+              value:
+                type: https://docs.example.corp/problems/unauthenticated
+                title: Unauthorized
+                status: 401
+                detail: Необхідна чинна корпоративна сесія.
+                code: UNAUTHENTICATED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    Forbidden:
+      description: Немає дозволу на цю дію.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            Forbidden:
+              summary: Access Denied
+              value:
+                type: https://docs.example.corp/problems/access-denied
+                title: Forbidden
+                status: 403
+                detail: Немає дозволу на цю дію.
+                code: ACCESS_DENIED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    NotFound:
+      description: Об’єкт не знайдено або його існування приховано.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            NotFound:
+              summary: Not Found
+              value:
+                type: https://docs.example.corp/problems/not-found
+                title: Not Found
+                status: 404
+                detail: Об’єкт не знайдено або його існування приховано.
+                code: NOT_FOUND
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    Conflict:
+      description: 'Конфлікт стану: застаріла версія, квота або процес видалення.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            Conflict:
+              summary: Version Conflict
+              value:
+                type: https://docs.example.corp/problems/version-conflict
+                title: Conflict
+                status: 409
+                detail: 'Конфлікт стану: застаріла версія, квота або процес видалення.'
+                code: VERSION_CONFLICT
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            VersionConflict:
+              summary: Застаріла версія
+              value:
+                type: https://docs.example.corp/problems/version-conflict
+                title: Conflict
+                status: 409
+                detail: expectedVersionNo=3; актуальна версія=4.
+                code: VERSION_CONFLICT
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+                currentVersionNo: 4
+            QuotaExceeded:
+              summary: Перевищено квоту
+              value:
+                type: https://docs.example.corp/problems/quota-exceeded
+                title: Conflict
+                status: 409
+                detail: Недостатньо вільного обсягу робочого простору.
+                code: QUOTA_EXCEEDED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            IdempotencyKeyReused:
+              summary: Повтор ключа з іншим тілом
+              value:
+                type: https://docs.example.corp/problems/idempotency-key-reused
+                title: Conflict
+                status: 409
+                detail: Ключ уже використовувався для іншого запиту.
+                code: IDEMPOTENCY_KEY_REUSED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            FilePurging:
+              summary: Фізичне видалення вже почалося
+              value:
+                type: https://docs.example.corp/problems/file-purging
+                title: Conflict
+                status: 409
+                detail: Відновлення після переходу до PURGING неможливе.
+                code: FILE_PURGING
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    Unprocessable:
+      description: Вміст файла не пройшов перевірку цілісності або безпеки.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            Unprocessable:
+              summary: Content Rejected
+              value:
+                type: https://docs.example.corp/problems/content-rejected
+                title: Unprocessable Content
+                status: 422
+                detail: Вміст файла не пройшов перевірку цілісності або безпеки.
+                code: CONTENT_REJECTED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            ChecksumMismatch:
+              summary: Розбіжність SHA-256
+              value:
+                type: https://docs.example.corp/problems/checksum-mismatch
+                title: Unprocessable Content
+                status: 422
+                detail: Контрольна сума завантаженого об’єкта не збігається.
+                code: CHECKSUM_MISMATCH
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            ContentRejected:
+              summary: Неуспішне сканування
+              value:
+                type: https://docs.example.corp/problems/content-rejected
+                title: Unprocessable Content
+                status: 422
+                detail: Файл не пройшов перевірку безпеки.
+                code: CONTENT_REJECTED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+            Quarantined:
+              summary: Версія у карантині
+              value:
+                type: https://docs.example.corp/problems/quarantined
+                title: Unprocessable Content
+                status: 422
+                detail: Запитана версія недоступна через карантин.
+                code: QUARANTINED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    RateLimited:
+      description: Перевищено ліміт запитів. Дотримуйтеся Retry-After.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            RateLimited:
+              summary: Rate Limited
+              value:
+                type: https://docs.example.corp/problems/rate-limited
+                title: Too Many Requests
+                status: 429
+                detail: Перевищено ліміт запитів. Дотримуйтеся Retry-After.
+                code: RATE_LIMITED
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: true
+      headers:
+        Retry-After:
+          description: Секунди до рекомендованої повторної спроби.
+          schema:
+            type: integer
+            minimum: 1
+            example: 30
+    ServerError:
+      description: Неочікувана помилка; внутрішні деталі приховано.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            ServerError:
+              summary: Internal Error
+              value:
+                type: https://docs.example.corp/problems/internal-error
+                title: Internal Server Error
+                status: 500
+                detail: Неочікувана помилка; внутрішні деталі приховано.
+                code: INTERNAL_ERROR
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: false
+    ServiceUnavailable:
+      description: Тимчасово недоступна залежність; безпечний повтор дозволено.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            ServiceUnavailable:
+              summary: Dependency Unavailable
+              value:
+                type: https://docs.example.corp/problems/dependency-unavailable
+                title: Service Unavailable
+                status: 503
+                detail: Тимчасово недоступна залежність; безпечний повтор дозволено.
+                code: DEPENDENCY_UNAVAILABLE
+                requestId: c55b68c2-3f52-453b-91db-3f3b1718570a
+                retryable: true
+      headers:
+        Retry-After:
+          description: Секунди до рекомендованої повторної спроби.
+          schema:
+            type: integer
+            minimum: 1
+            example: 30
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+        csrfToken:
+          type: string
+          description: Токен для заголовка X-CSRF-Token; передається лише автентифікованому SPA.
+      required:
+      - id
+      - displayName
+      - email
+      - status
+      - csrfToken
+    Workspace:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        myRole:
+          type: string
+          enum:
+          - VIEWER
+          - EDITOR
+          - OWNER
+        quotaBytes:
+          type: integer
+          format: int64
+        usedBytes:
+          type: integer
+          format: int64
+      required:
+      - id
+      - name
+      - myRole
+      - quotaBytes
+      - usedBytes
+    Folder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+        name:
+          type: string
+      required:
+      - id
+      - workspaceId
+      - parentId
+      - name
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - FILE
+          - FOLDER
+        name:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        fileStatus:
+          type: string
+          enum:
+          - PENDING_SCAN
+          - CLEAN
+          - REJECTED
+          - TRASHED
+          nullable: true
+      required:
+      - id
+      - kind
+      - name
+      - updatedAt
+    UploadSession:
+      type: object
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - INITIATED
+          - PROCESSING
+          - READY
+          - REJECTED
+          - CONFLICT
+          - EXPIRED
+        partSizeBytes:
+          type: integer
+          format: int64
+        partCount:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+        fileId:
+          type: string
+          format: uuid
+          nullable: true
+        versionNo:
+          type: integer
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+      required:
+      - uploadId
+      - status
+      - partSizeBytes
+      - partCount
+      - expiresAt
+    File:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        folderId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        latestVersionNo:
+          type: integer
+        downloadableVersionNo:
+          type: integer
+          nullable: true
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        legalHold:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - folderId
+      - name
+      - latestVersionNo
+      - legalHold
+      - updatedAt
+    Version:
+      type: object
+      properties:
+        versionNo:
+          type: integer
+        sizeBytes:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+          pattern: ^[a-fA-F0-9]{64}$
+        status:
+          type: string
+          enum:
+          - PENDING_SCAN
+          - CLEAN
+          - REJECTED
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          format: uuid
+      required:
+      - versionNo
+      - sizeBytes
+      - sha256
+      - status
+      - createdAt
+      - createdBy
+    SignedPart:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - PUT
+        url:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+        requiredHeaders:
+          type: object
+          properties:
+            Content-Type:
+              type: string
+          required:
+          - Content-Type
+      required:
+      - method
+      - url
+      - expiresAt
+      - requiredHeaders
+    DownloadLink:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - GET
+        url:
+          type: string
+          format: uri
+        versionNo:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - method
+      - url
+      - versionNo
+      - expiresAt
+    ShareLink:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        recipientUserId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - url
+      - recipientUserId
+      - expiresAt
+    ShareLinkSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipientUserId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - recipientUserId
+      - expiresAt
+      - revokedAt
+    PermissionEntry:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+          - VIEWER
+          - EDITOR
+      required:
+      - userId
+      - role
+    ShareResolution:
+      type: object
+      properties:
+        fileId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        download:
+          $ref: '#/components/schemas/DownloadLink'
+      required:
+      - fileId
+      - fileName
+      - download
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        at:
+          type: string
+          format: date-time
+        actorUserId:
+          type: string
+          format: uuid
+          nullable: true
+        action:
+          type: string
+        targetId:
+          type: string
+          format: uuid
+          nullable: true
+        result:
+          type: string
+        requestId:
+          type: string
+          format: uuid
+      required:
+      - id
+      - at
+      - action
+      - result
+      - requestId
+    Policy:
+      type: object
+      properties:
+        quotaBytes:
+          type: integer
+          format: int64
+          minimum: 1
+        retentionDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+      required:
+      - quotaBytes
+      - retentionDays
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://docs.example.corp/problems/version-conflict
+        title:
+          type: string
+          example: Conflict
+        status:
+          type: integer
+          example: 409
+        detail:
+          type: string
+          example: Версія файла змінилася після початку завантаження.
+        instance:
+          type: string
+          example: /api/v1/uploads/00000000-0000-4000-8000-000000000010/complete
+        code:
+          type: string
+          example: VERSION_CONFLICT
+        requestId:
+          type: string
+          format: uuid
+        retryable:
+          type: boolean
+          example: false
+        currentVersionNo:
+          type: integer
+          minimum: 1
+          description: Для VERSION_CONFLICT — актуальна версія файла.
+        invalidParams:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+            required:
+            - name
+            - reason
+      required:
+      - type
+      - title
+      - status
+      - detail
+      - code
+      - requestId
+      - retryable
