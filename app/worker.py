@@ -123,7 +123,19 @@ def scan(job, lease):
         if not version or version["scan_status"] != "PENDING_SCAN" or version["purge_state"] in {"PURGING", "PURGED"}:
             done(conn, job)
             return
-    rejection = storage.verify_object(upload, lease.check)
+    started = time.monotonic()
+    outcome = "technical_failure"
+    try:
+        rejection = storage.verify_object(upload, lease.check)
+        outcome = "rejected" if rejection else "clean"
+    finally:
+        try:
+            from .observability import observe_scan
+            observe_scan(time.monotonic() - started, outcome, upload["size_bytes"])
+        except Exception:
+            # Metrics must never turn a technical scanner failure into CLEAN,
+            # or prevent a valid fenced result from being committed.
+            log.warning("scan_observation_unavailable job_id=%s", job["id"])
     lease.check()
     with connection() as conn:
         conn.execute("SELECT id FROM workspaces WHERE id=%s FOR UPDATE", (upload["workspace_id"],))

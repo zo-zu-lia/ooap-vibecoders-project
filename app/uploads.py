@@ -115,6 +115,15 @@ def _upload_access(conn, actor, upload_id, lock=False):
     return upload
 
 
+def _raise_upload_conflict(conn, upload):
+    details = {}
+    if upload["error_code"] == "VERSION_CONFLICT" and upload["file_id"]:
+        current = conn.execute("SELECT latest_version_no FROM files WHERE id=%s", (upload["file_id"],)).fetchone()
+        if current:
+            details["currentVersionNo"] = current["latest_version_no"]
+    raise Problem(409, upload["error_code"], "Another change won this update. Save your changes as a separate file.", **details)
+
+
 def _initiate(actor, request, body, key, folder_id=None, file_id=None):
     key = _key(key)
     operation = f"init-upload:{'file' if file_id else 'folder'}:{file_id or folder_id}"
@@ -332,13 +341,18 @@ def complete_upload(upload_id: UUID, body: CompleteBody, request: Request,
     fingerprint = _hash(parts)
     with connection() as conn:
         upload = _upload_access(conn, actor, upload_id, lock=True)
+        if upload["expected_version_no"] is not None:
+            request.state.analytics_attempt = dict(
+                event_name="version.complete_attempted", workspace_id=upload["workspace_id"],
+                resource_id=upload["id"], operation_id=key,
+            )
         cached = idempotency_get(conn, actor.id, f"complete-upload:{upload_id}", key, body.model_dump())
         if cached:
             return cached
         if upload["completion_hash"] and upload["completion_hash"] != fingerprint:
             raise Problem(409, "IDEMPOTENCY_KEY_REUSED", "This upload was completed with a different manifest.")
         if upload["state"] == "CONFLICT":
-            raise Problem(409, upload["error_code"], "The upload could not commit; preserve your local copy.")
+            _raise_upload_conflict(conn, upload)
         if upload["state"] in {"PROCESSING", "READY", "REJECTED"}:
             return session_json(upload)
         if upload["state"] not in {"INITIATED", "COMPLETING"} or (
@@ -372,7 +386,8 @@ def complete_upload(upload_id: UUID, body: CompleteBody, request: Request,
     except Exception as exc:
         raise Problem(503, "STORAGE_UNAVAILABLE", "Completion is being retried. Poll this upload before retrying.") from exc
     if result["state"] == "CONFLICT":
-        raise Problem(409, result["error_code"], "Another change won this update. Save your changes as a separate file.")
+        with connection() as conn:
+            _raise_upload_conflict(conn, result)
     return session_json(result)
 
 
@@ -400,6 +415,10 @@ def download_for_file(conn, file_row, actor, request_id):
         raise Problem(409, "FILE_NOT_READY", "No version has passed checksum and antivirus verification yet.")
     url = storage.download_url(version["object_key"], file_row["name"])
     audit(conn, actor.id, "DOWNLOAD_LINK_ISSUED", file_row["id"], request_id, workspace_id=file_row["workspace_id"])
+    from .analytics import record_event
+    record_event(conn, event_name="download.link_issued", actor_id=actor.id,
+                 workspace_id=file_row["workspace_id"], resource_id=file_row["id"],
+                 version_no=version["version_no"], operation_id=request_id)
     return dict(method="GET", url=url, versionNo=version["version_no"], expiresAt=(utcnow() + timedelta(seconds=60)).isoformat())
 
 
