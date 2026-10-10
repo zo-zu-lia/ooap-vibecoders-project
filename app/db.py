@@ -26,6 +26,10 @@ def demo_id(n):
 
 
 def seed(conn):
+    # Seed once. Re-running migrations must never recreate revoked grants.
+    inserted = conn.execute("INSERT INTO app_metadata(key,value) VALUES ('local_demo_seed','1') ON CONFLICT DO NOTHING RETURNING key").fetchone()
+    if not inserted:
+        return
     for n, email, name, admin in [(1,'owner','Alex Morgan',False),(2,'editor','Sam Chen',False),
                                   (3,'viewer','Taylor Reed',False),(4,'security','Jordan Security',True),
                                   (5,'finance','Casey Finance',False)]:

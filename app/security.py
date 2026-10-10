@@ -132,7 +132,7 @@ def file_access(conn, actor, file_id, minimum='VIEWER', lock='share', allow_dele
     row = conn.execute('SELECT * FROM files WHERE id=%s FOR '+('UPDATE' if lock=='update' else 'SHARE'),(file_id,)).fetchone()
     inherited = workspace_role(conn,actor.id,row['workspace_id'])
     personal = conn.execute('SELECT role FROM file_permissions WHERE file_id=%s AND user_id=%s',(file_id,actor.id)).fetchone()
-    role = max([inherited,personal['role'] if personal else None,'OWNER' if row['created_by']==actor.id else None],key=lambda x:ROLE_ORDER.get(x,0))
+    role = max([inherited,personal['role'] if personal else None],key=lambda x:ROLE_ORDER.get(x,0))
     if ROLE_ORDER.get(role,0) < ROLE_ORDER[minimum]:
         raise Problem(403,'ACCESS_DENIED','You do not have permission for this file.')
     if row['purge_state']=='PURGED':

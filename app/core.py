@@ -64,7 +64,7 @@ def file_json(conn,row,actor=None):
         inherited = workspace_role(conn,actor.id,row['workspace_id'])
         grant = conn.execute('SELECT role FROM file_permissions WHERE file_id=%s AND user_id=%s',(row['id'],actor.id)).fetchone()
         order = {None:0,'VIEWER':1,'EDITOR':2,'OWNER':3}
-        role = max([inherited,grant['role'] if grant else None,'OWNER' if row['created_by']==actor.id else None],key=order.get)
+        role = max([inherited,grant['role'] if grant else None],key=order.get)
     return dict(id=row['id'],workspaceId=row['workspace_id'],folderId=row['folder_id'],name=row['name'],
                 latestVersionNo=row['latest_version_no'],downloadableVersionNo=latest,deletedAt=row['deleted_at'],
                 purgeAt=row['purge_at'],legalHold=row['legal_hold'],updatedAt=row['updated_at'],myRole=role)
@@ -381,17 +381,17 @@ def search(workspaceId: UUID,q: str=Query(min_length=2,max_length=128),cursor: s
         lock_workspace(conn,workspaceId)
         inherited=workspace_role(conn,actor.id,workspaceId)
         if not inherited and not conn.execute('''SELECT 1 FROM files f WHERE f.workspace_id=%s AND
-            (f.created_by=%s OR EXISTS(SELECT 1 FROM file_permissions p WHERE p.file_id=f.id AND p.user_id=%s)) LIMIT 1''',
-            (workspaceId,actor.id,actor.id)).fetchone():
+            EXISTS(SELECT 1 FROM file_permissions p WHERE p.file_id=f.id AND p.user_id=%s) LIMIT 1''',
+            (workspaceId,actor.id)).fetchone():
             raise Problem(403,'ACCESS_DENIED','You do not have access to files in this workspace.')
         scope=f'search:{workspaceId}:{q}:{actor.id}'
         pos=cursor_decode(cursor,scope)
         # Escape SQL wildcards: this API searches literal filename fragments.
         pattern='%'+q.casefold().replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
         rows=conn.execute('''SELECT * FROM files WHERE workspace_id=%s AND purge_state='ACTIVE' AND normalized_name LIKE %s
-             AND (%s OR created_by=%s OR EXISTS(SELECT 1 FROM file_permissions p WHERE p.file_id=files.id AND p.user_id=%s))
+             AND (%s OR EXISTS(SELECT 1 FROM file_permissions p WHERE p.file_id=files.id AND p.user_id=%s))
              AND (%s::text IS NULL OR (normalized_name,id)>(%s,%s::uuid)) ORDER BY normalized_name,id LIMIT 101''',
-             (workspaceId,pattern,bool(inherited),actor.id,actor.id,pos[0] if pos else None,pos[0] if pos else None,pos[1] if pos else None)).fetchall()
+             (workspaceId,pattern,bool(inherited),actor.id,pos[0] if pos else None,pos[0] if pos else None,pos[1] if pos else None)).fetchall()
         return dict(items=[file_json(conn,row,actor) for row in rows[:100]],
                     nextCursor=cursor_encode([rows[99]['normalized_name'],rows[99]['id']],scope) if len(rows)>100 else None)
 

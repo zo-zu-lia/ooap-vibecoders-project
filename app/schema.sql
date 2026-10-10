@@ -1,3 +1,4 @@
+CREATE TABLE IF NOT EXISTS app_metadata (key text PRIMARY KEY,value text NOT NULL);
 CREATE TABLE IF NOT EXISTS users (
  id uuid PRIMARY KEY, email text NOT NULL UNIQUE, display_name text NOT NULL,
  status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DISABLED')),
