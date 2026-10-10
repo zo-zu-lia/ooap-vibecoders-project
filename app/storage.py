@@ -11,7 +11,7 @@ import os
 import socket
 import struct
 import time
-from functools import lru_cache
+from functools import lru_cache, wraps
 from typing import Callable
 from urllib.parse import quote
 
@@ -30,6 +30,26 @@ class InvalidManifest(ValueError):
 
 class ScannerUnavailable(RuntimeError):
     pass
+
+
+def observed_storage(operation):
+    """Report bounded operation labels without logging keys or signed URLs."""
+    def decorate(function):
+        @wraps(function)
+        def measured(*args, **kwargs):
+            result = "failure"
+            try:
+                value = function(*args, **kwargs)
+                result = "success"
+                return value
+            finally:
+                try:
+                    from .observability import dependency_result
+                    dependency_result("storage", operation, result)
+                except Exception:
+                    pass
+        return measured
+    return decorate
 
 
 @lru_cache(maxsize=2)
@@ -61,6 +81,7 @@ def is_missing(exc: ClientError) -> bool:
     }
 
 
+@observed_storage("initialize")
 def initialize_bucket() -> None:
     s3 = client()
     try:
@@ -93,6 +114,7 @@ def initialize_bucket() -> None:
             raise
 
 
+@observed_storage("create_multipart")
 def create_multipart(upload: dict) -> str:
     return client().create_multipart_upload(
         Bucket=BUCKET,
@@ -116,6 +138,7 @@ def part_url(upload: dict, part: int, expires: int = 900) -> str:
     )
 
 
+@observed_storage("head")
 def head(key: str) -> dict | None:
     try:
         return client().head_object(Bucket=BUCKET, Key=key)
@@ -125,6 +148,7 @@ def head(key: str) -> dict | None:
         raise
 
 
+@observed_storage("list_parts")
 def validate_parts(upload: dict, parts: list[dict]) -> None:
     if [part["partNumber"] for part in parts] != list(range(1, upload["part_count"] + 1)):
         raise InvalidManifest("Supply each part exactly once, in ascending order.")
@@ -144,6 +168,7 @@ def validate_parts(upload: dict, parts: list[dict]) -> None:
             raise InvalidManifest("Part number, ETag, or size does not match the uploaded bytes.")
 
 
+@observed_storage("complete_multipart")
 def complete_multipart(upload: dict) -> None:
     # HEAD reconciles both a lost S3 response and an API crash before DB commit.
     obj = head(upload["object_key"])
@@ -178,12 +203,14 @@ def download_url(key: str, filename: str) -> str:
     )
 
 
+@observed_storage("delete")
 def delete_confirmed(key: str) -> None:
     client().delete_object(Bucket=BUCKET, Key=key)
     if head(key) is not None:
         raise RuntimeError("Object deletion has not been confirmed")
 
 
+@observed_storage("abort_multipart")
 def abort_multiparts(key: str) -> None:
     # Include any empty multipart created before an interrupted initiation commit.
     pending = []
