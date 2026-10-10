@@ -118,7 +118,7 @@ function navButton(label, symbol, active, action) {
 function renderShell() {
   const ws = state.workspace;
   const workspaceNav = el('div', {}, el('div', { class: 'nav-label' }, 'Workspaces'), el('div', { class: 'nav-list' }, state.workspaces.map(space => navButton(space.name, 'dot', ws?.id === space.id && ['files', 'search'].includes(state.mode), () => selectWorkspace(space))), !state.workspaces.length && el('p', { class: 'small muted' }, 'No workspace memberships.')));
-  const toolsNav = el('div', {}, el('div', { class: 'nav-label' }, 'Manage'), el('div', { class: 'nav-list' }, ws && navButton('Trash', 'trash', state.mode === 'trash', () => changeMode('trash')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Workspace settings', 'shield', state.mode === 'settings', () => changeMode('settings')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Analytics', 'clock', state.mode === 'analytics', () => changeMode('analytics')), isAdmin() && navButton('Audit log', 'clock', state.mode === 'audit', () => changeMode('audit')), isAdmin() && navButton('Failed jobs', 'refresh', state.mode === 'jobs', () => changeMode('jobs'))));
+  const toolsNav = el('div', {}, el('div', { class: 'nav-label' }, 'Manage'), el('div', { class: 'nav-list' }, navButton('Shared with me', 'link', state.mode === 'shared', () => changeMode('shared')), ws && navButton('Trash', 'trash', state.mode === 'trash', () => changeMode('trash')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Workspace settings', 'shield', state.mode === 'settings', () => changeMode('settings')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Analytics', 'clock', state.mode === 'analytics', () => changeMode('analytics')), isAdmin() && navButton('Audit log', 'clock', state.mode === 'audit', () => changeMode('audit')), isAdmin() && navButton('Failed jobs', 'refresh', state.mode === 'jobs', () => changeMode('jobs'))));
   const sidebar = el('aside', { class: 'sidebar' }, brand(), el('nav', { 'aria-label': 'Main navigation' }, workspaceNav, toolsNav), el('div', { class: 'sidebar-footer' }, ws && el('div', {}, el('div', { class: 'quota-label' }, el('span', {}, 'Workspace storage'), el('span', {}, `${Math.round((ws.usedBytes || 0) / ws.quotaBytes * 100)}%`)), el('div', { class: 'quota-track' }, el('progress', { max: ws.quotaBytes, value: ws.usedBytes || 0, 'aria-label': 'Storage used' })), el('div', { class: 'storage-caption' }, `${bytes(ws.usedBytes)} of ${bytes(ws.quotaBytes)} used`)), el('p', { class: 'storage-caption sidebar-caption' }, 'A little order. A lot of possibility.')));
   const searchInput = el('input', { type: 'search', placeholder: 'Search files in this workspace…', 'aria-label': 'Search filenames', minlength: '2', maxlength: '128', value: state.mode === 'search' ? state.query : '', disabled: !ws, name: 'q' });
   const search = el('form', { class: 'search', role: 'search', onsubmit: event => { event.preventDefault(); const query = searchInput.value.trim(); if (query.length >= 2) { state.query = query; run(() => changeMode('search')); } else searchInput.reportValidity(); } }, icon('search'), searchInput, el('button', { class: 'button subtle small', type: 'submit', disabled: !ws }, 'Search'));
@@ -143,7 +143,7 @@ function empty(title, message, symbol = 'folder', extra) {
 }
 function renderLoading() { $('#main').replaceChildren(empty('Loading…', 'Getting your workspace ready.')); }
 async function loadItems(more = false) {
-  if (!state.workspace && state.mode !== 'audit') {
+  if (!state.workspace && !['audit', 'shared'].includes(state.mode)) {
     $('#main').replaceChildren(empty('Welcome to FileFlow', 'Your workspace memberships appear here. A colleague can also send you a personal file link.', 'shield', isAdmin() && button('Open workspace settings', () => changeMode('settings')))); return;
   }
   const generation = ++state.loadGeneration;
@@ -152,6 +152,7 @@ async function loadItems(more = false) {
   if (more && state.cursor) params.set('cursor', state.cursor);
   let path;
   if (state.mode === 'audit') path = '/audit-events';
+  else if (state.mode === 'shared') path = '/shared-files';
   else if (state.mode === 'trash') path = `/workspaces/${state.workspace.id}/trash`;
   else if (state.mode === 'search') { path = '/search'; params.set('workspaceId', state.workspace.id); params.set('q', state.query); }
   else { path = `/workspaces/${state.workspace.id}/items`; if (state.path.length) params.set('parentId', currentFolderId()); }
@@ -171,22 +172,23 @@ function heading(title, subtitle, actions = []) {
   return el('div', { class: 'heading' }, el('div', {}, el('div', { class: 'eyebrow' }, 'Your team, in sync'), el('h1', {}, title), el('p', {}, subtitle)), el('div', { class: 'actions' }, actions));
 }
 function renderItems() {
-  const trash = state.mode === 'trash', search = state.mode === 'search';
-  const title = trash ? 'Trash' : search ? 'Search results' : state.workspace.name;
-  const subtitle = trash ? 'Recover a file before its retention period ends.' : search ? `Files matching “${state.query}”` : 'A shared home for your team’s files and ideas.';
+  const trash = state.mode === 'trash', search = state.mode === 'search', shared = state.mode === 'shared';
+  const title = trash ? 'Trash' : search ? 'Search results' : shared ? 'Shared with me' : state.workspace.name;
+  const subtitle = trash ? 'Recover a file before its retention period ends.' : search ? `Files matching “${state.query}”` : shared ? 'Files where a colleague has given you direct access.' : 'A shared home for your team’s files and ideas.';
   const controls = [];
-  if (!trash && !search && canEdit()) controls.push(button('New folder', createFolder, { icon: 'plus' }), button('Upload files', () => chooseFiles(), { icon: 'upload', class: 'primary' }));
-  const crumbs = el('div', { class: 'breadcrumbs', 'aria-label': 'Folder path' }, el('button', { type: 'button', onclick: () => run(async () => { state.path = []; state.mode = 'files'; await loadItems(); }) }, state.workspace.name));
+  if (!trash && !search && !shared && canEdit()) controls.push(button('New folder', createFolder, { icon: 'plus' }), button('Upload files', () => chooseFiles(), { icon: 'upload', class: 'primary' }));
+  const crumbs = el('div', { class: 'breadcrumbs', 'aria-label': 'Folder path' }, el('button', { type: 'button', onclick: () => run(async () => { state.path = []; state.mode = 'files'; await loadItems(); }) }, shared ? 'Shared with me' : state.workspace.name));
+  if (shared) crumbs.replaceChildren(el('span', {}, 'Direct file permissions'));
   if (trash || search) crumbs.append(el('span', {}, '/'), el('span', {}, trash ? 'Trash' : 'Search'));
-  else state.path.forEach((folder, i) => crumbs.append(el('span', {}, '/'), el('button', { type: 'button', onclick: () => run(async () => { state.path = state.path.slice(0, i + 1); await loadItems(); }) }, folder.name)));
+  else if (!shared) state.path.forEach((folder, i) => crumbs.append(el('span', {}, '/'), el('button', { type: 'button', onclick: () => run(async () => { state.path = state.path.slice(0, i + 1); await loadItems(); }) }, folder.name)));
   const table = el('table', {}, el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Name'), el('th', { scope: 'col' }, trash ? 'Deleted' : 'Status'), el('th', { scope: 'col', class: 'hide-mobile' }, trash ? 'Retained until' : 'Last updated'), el('th', { scope: 'col' }, el('span', { class: 'muted' }, 'Actions')))), el('tbody', {}, state.items.map(item => {
     const folder = item.kind === 'FOLDER';
     const name = el('button', { type: 'button', class: 'file-name', onclick: () => run(folder ? async () => { state.path.push({ id: item.id, name: item.name }); await loadItems(); } : () => openFile(item.id)) }, el('span', { class: `file-icon ${folder ? 'folder-icon' : ''}` }, icon(folder ? 'folder' : 'file')), el('span', {}, item.name));
     const actions = trash ? [button('Restore', () => recover(item), { class: 'small', disabled: !canEdit(item) })] : folder ? [] : [button('Details', () => openFile(item.id), { class: 'small subtle', 'aria-label': `Details for ${item.name}` })];
     return el('tr', {}, el('td', {}, name), el('td', {}, trash ? el('span', { class: 'muted small' }, date(item.deletedAt)) : folder ? el('span', { class: 'muted small' }, 'Folder') : status(item.fileStatus || item.status || (item.downloadableVersionNo ? 'CLEAN' : 'PENDING_SCAN'))), el('td', { class: 'hide-mobile muted small' }, trash ? item.legalHold ? 'Legal hold' : date(item.purgeAt) : date(item.updatedAt)), el('td', {}, el('div', { class: 'actions' }, actions)));
   })));
-  const panel = el('section', { class: 'panel', 'aria-label': trash ? 'Deleted files' : 'Files and folders' }, el('div', { class: 'panel-toolbar' }, crumbs, button('', () => loadItems(), { icon: 'refresh', class: 'subtle icon-only', 'aria-label': 'Refresh files', title: 'Refresh' })), state.items.length ? el('div', { class: 'table-wrap' }, table) : empty(trash ? 'Your trash is empty' : search ? 'No matching files' : 'Make room for great work', trash ? 'Deleted files will appear here while they can still be restored.' : search ? 'Try a different filename or a shorter search.' : 'Create a folder or upload your first document to get this workspace started.', trash ? 'trash' : 'folder', !trash && !search && canEdit() && button('Upload your first file', () => chooseFiles(), { class: 'primary', icon: 'upload' })), el('div', { class: 'table-footer' }, `${state.items.length} ${state.items.length === 1 ? 'item' : 'items'}`, state.cursor ? button('Load more', () => loadItems(true), { class: 'small subtle' }) : 'All caught up'));
-  const info = !trash && !search && el('div', { class: 'info-strip' }, icon('shield'), el('div', {}, el('strong', {}, 'Your team’s work stays protected.'), ' Every upload is checked before it can be downloaded. Previous versions stay available.'));
+  const panel = el('section', { class: 'panel', 'aria-label': trash ? 'Deleted files' : 'Files and folders' }, el('div', { class: 'panel-toolbar' }, crumbs, button('', () => loadItems(), { icon: 'refresh', class: 'subtle icon-only', 'aria-label': 'Refresh files', title: 'Refresh' })), state.items.length ? el('div', { class: 'table-wrap' }, table) : empty(trash ? 'Your trash is empty' : search ? 'No matching files' : shared ? 'Nothing shared directly yet' : 'Make room for great work', trash ? 'Deleted files will appear here while they can still be restored.' : search ? 'Try a different filename or a shorter search.' : shared ? 'Files appear here when a workspace owner grants you permission. Temporary links open from the link your colleague sends.' : 'Create a folder or upload your first document to get this workspace started.', trash ? 'trash' : 'folder', !trash && !search && !shared && canEdit() && button('Upload your first file', () => chooseFiles(), { class: 'primary', icon: 'upload' })), el('div', { class: 'table-footer' }, `${state.items.length} ${state.items.length === 1 ? 'item' : 'items'}`, state.cursor ? button('Load more', () => loadItems(true), { class: 'small subtle' }) : 'All caught up'));
+  const info = !trash && !search && !shared && el('div', { class: 'info-strip' }, icon('shield'), el('div', {}, el('strong', {}, 'Your team’s work stays protected.'), ' Every upload is checked before it can be downloaded. Previous versions stay available.'));
   $('#main').replaceChildren(heading(title, subtitle, controls), ...(info ? [info] : []), panel, el('p', { class: 'below-table' }, icon('shield'), 'Only people with permission can access these files.'));
 }
 function modal(title, children, options = {}) {
@@ -218,6 +220,7 @@ async function openFile(id) {
   const actions = [];
   if (!file.deletedAt) {
     actions.push(button('Download', () => downloadFile(file.id), { icon: 'download', class: 'primary', disabled: !file.downloadableVersionNo, title: file.downloadableVersionNo ? `Download version ${file.downloadableVersionNo}` : 'Available after a version passes its checks' }));
+    actions.push(button('Copy file link', () => copyFileLink(file), { icon: 'link' }));
     if (canEdit(file)) actions.push(button('Upload new version', () => chooseFiles(file), { icon: 'upload' }));
     if (isOwner(file)) actions.push(button('Manage access', () => manageAccess(file), { icon: 'link' }));
     if (canEdit(file)) actions.push(button('Move to trash', async () => { if (!confirm(`Move “${file.name}” to trash? Its shared links will be revoked.`)) return; await api(`/files/${id}`, { method: 'DELETE' }); closeModal(); notify('File moved to trash.'); await loadItems(); }, { icon: 'trash', class: 'danger' }));
@@ -226,6 +229,7 @@ async function openFile(id) {
   const content = [el('div', { class: 'detail-summary' }, el('span', {}, `Version ${file.latestVersionNo}`), el('span', {}, bytes(latest?.sizeBytes)), el('span', {}, date(file.updatedAt)), file.legalHold && status('Legal hold')), el('div', { class: 'actions' }, actions)];
   if (file.downloadableVersionNo && file.downloadableVersionNo !== file.latestVersionNo) content.push(el('p', { class: 'callout' }, `The newest version is ${latest?.status === 'REJECTED' ? 'rejected' : 'being checked'}. Downloads currently use the last verified version, ${file.downloadableVersionNo}.`));
   if (latest?.status === 'PENDING_SCAN') content.push(el('p', { class: 'callout' }, 'This version is being checked for integrity and malware. Refresh its details to see the result.'));
+  content.push(el('details', { class: 'file-identifier' }, el('summary', { class: 'muted small' }, 'File identifier'), el('span', { class: 'mono' }, file.id)));
   content.push(el('h3', {}, 'Version history'), ...versions.map(version => el('div', { class: 'version-row' }, el('div', {}, el('div', { class: 'version-meta' }, el('strong', {}, `Version ${version.versionNo}`), status(version.status), version.versionNo === file.latestVersionNo && el('span', { class: 'muted small' }, 'Latest')), el('small', {}, `${bytes(version.sizeBytes)} · ${date(version.createdAt)}`), el('details', {}, el('summary', { class: 'muted small' }, 'Checksum'), el('span', { class: 'mono' }, version.sha256))), !file.deletedAt && canEdit(file) && version.status === 'CLEAN' && version.versionNo !== file.latestVersionNo && button('Restore version', async () => { if (!confirm(`Create a new version from version ${version.versionNo}? All previous versions will remain.`)) return; await api(`/files/${id}/versions/${version.versionNo}/restore`, { method: 'POST', key: uuid(), body: { expectedVersionNo: file.latestVersionNo } }); notify('Previous content restored as a new version.'); await openFile(id); await loadItems(); }, { class: 'small' }))));
   content.push(el('div', { class: 'dialog-footer' }, button('Refresh details', () => openFile(id), { icon: 'refresh' }), button('Done', closeModal, { class: 'primary' })));
   modal(file.name, content);
@@ -440,7 +444,7 @@ async function uploadFile(file, transfer, context) {
     const completed = await api(`/uploads/${session.uploadId}/complete`, { method: 'POST', key: transfer.completionKey, body: { parts } });
     updateTransfer(transfer, 'checking', 'Checking file integrity and scanning for malware…', 96);
     await refreshStorage();
-    if (['files', 'search'].includes(state.mode)) await loadItems();
+    if (['files', 'search', 'shared'].includes(state.mode)) await loadItems();
     // Verification runs independently so the next selected file can start uploading.
     pollTransfer(transfer, completed).catch(error => { updateTransfer(transfer, 'failed', error.message); persistTransfers(); });
   } catch (error) {
@@ -455,7 +459,7 @@ async function pollTransfer(transfer, initial) {
       updateTransfer(transfer, 'done', 'Ready · integrity verified and scan passed', 100);
       persistTransfers();
       await refreshStorage();
-      if (['files', 'search'].includes(state.mode)) await loadItems();
+      if (['files', 'search', 'shared'].includes(state.mode)) await loadItems();
       if (state.detail?.id === session.fileId && $('#dialog').open) await openFile(session.fileId);
       return;
     }
@@ -464,7 +468,7 @@ async function pollTransfer(transfer, initial) {
       updateTransfer(transfer, 'failed', messages[session.status]);
       delete transfer.parts;
       persistTransfers();
-      if (['files', 'search'].includes(state.mode)) await loadItems();
+      if (['files', 'search', 'shared'].includes(state.mode)) await loadItems();
       return;
     }
     updateTransfer(transfer, 'checking', errors ? 'Waiting for the server. Verification will continue automatically.' : 'Checking file integrity and scanning for malware…', 96);
@@ -496,8 +500,9 @@ function pendingShare() {
   try {
     const fragment = location.hash.slice(1);
     const params = new URLSearchParams(fragment);
+    if (params.get('file')) { sessionStorage.removeItem('fileflow.pendingShare'); return null; }
     const token = params.get('share') || (fragment && !fragment.includes('=') && fragment.length >= 20 ? fragment : null);
-    if (token) { sessionStorage.setItem('fileflow.pendingShare', token); history.replaceState(null, '', `${location.pathname}${location.search}`); }
+    if (token) { sessionStorage.removeItem('fileflow.pendingFile'); sessionStorage.setItem('fileflow.pendingShare', token); history.replaceState(null, '', `${location.pathname}${location.search}`); }
     return sessionStorage.getItem('fileflow.pendingShare');
   } catch { return null; }
 }
@@ -510,10 +515,10 @@ async function resolveShare(token) {
     modal('Could not open this share link', [el('p', {}, error.message), error.requestId && el('p', { class: 'mono' }, `Request ID: ${error.requestId}`), el('div', { class: 'dialog-footer' }, button('Try again', () => resolveShare(token)), button('Close', () => { sessionStorage.removeItem('fileflow.pendingShare'); closeModal(); }))]);
   }
 }
-window.addEventListener('hashchange', () => { const token = pendingShare(); if (token && state.me) run(() => resolveShare(token)); });
+window.addEventListener('hashchange', () => { const token = pendingShare(), fileId = pendingFile(); if (token && state.me) run(() => resolveShare(token)); else if (fileId && state.me) { sessionStorage.removeItem('fileflow.pendingFile'); run(() => openFile(fileId)); } });
 window.addEventListener('beforeunload', event => { if (state.transfers.some(transfer => ['queued', 'hashing', 'uploading'].includes(transfer.status))) { event.preventDefault(); event.returnValue = ''; } });
 async function boot() {
-  const token = pendingShare();
+  const token = pendingShare(), fileId = pendingFile();
   try { state.me = await api('/me', { retries: 0 }); }
   catch (error) { renderLogin(error.status === 401 ? null : error.message); return; }
   try {
@@ -523,6 +528,7 @@ async function boot() {
     await loadItems();
     resumeTransfers();
     if (token) await resolveShare(token);
+    else if (fileId) { sessionStorage.removeItem('fileflow.pendingFile'); await run(() => openFile(fileId)); }
   } catch (error) { renderShell(); $('#main').replaceChildren(empty('Could not open your workspace', error.message, 'refresh', button('Try again', boot))); }
 }
 boot();
@@ -584,4 +590,21 @@ async function renderAnalytics() {
   scope.addEventListener('change', () => run(refresh)); days.addEventListener('change', () => run(refresh));
   $('#main').replaceChildren(heading('Workspace activity', 'Understand how files move through your team.', [button('Refresh', refresh, { icon: 'refresh' })]), el('div', { class: 'form-row analytics-controls' }, field('Scope', scope), field('Period', days)), body);
   await refresh();
+}
+
+async function copyFileLink(file) {
+  const url = `${location.origin}/#file=${encodeURIComponent(file.id)}`;
+  try { await navigator.clipboard.writeText(url); notify('File link copied. Only people with existing access can open it.'); }
+  catch {
+    const input = el('input', { readonly: true, value: url, onclick: event => event.currentTarget.select() });
+    modal('Copy file link', [field('Only people with existing access can open this link.', input), el('div', { class: 'dialog-footer' }, button('Back to file', () => openFile(file.id)))]);
+    input.focus(); input.select();
+  }
+}
+function pendingFile() {
+  try {
+    const id = new URLSearchParams(location.hash.slice(1)).get('file');
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) { sessionStorage.setItem('fileflow.pendingFile', id); history.replaceState(null, '', `${location.pathname}${location.search}`); }
+    return sessionStorage.getItem('fileflow.pendingFile');
+  } catch { return null; }
 }
