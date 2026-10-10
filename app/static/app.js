@@ -118,7 +118,7 @@ function navButton(label, symbol, active, action) {
 function renderShell() {
   const ws = state.workspace;
   const workspaceNav = el('div', {}, el('div', { class: 'nav-label' }, 'Workspaces'), el('div', { class: 'nav-list' }, state.workspaces.map(space => navButton(space.name, 'dot', ws?.id === space.id && ['files', 'search'].includes(state.mode), () => selectWorkspace(space))), !state.workspaces.length && el('p', { class: 'small muted' }, 'No workspace memberships.')));
-  const toolsNav = el('div', {}, el('div', { class: 'nav-label' }, 'Manage'), el('div', { class: 'nav-list' }, ws && navButton('Trash', 'trash', state.mode === 'trash', () => changeMode('trash')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Workspace settings', 'shield', state.mode === 'settings', () => changeMode('settings')), isAdmin() && navButton('Audit log', 'clock', state.mode === 'audit', () => changeMode('audit'))));
+  const toolsNav = el('div', {}, el('div', { class: 'nav-label' }, 'Manage'), el('div', { class: 'nav-list' }, ws && navButton('Trash', 'trash', state.mode === 'trash', () => changeMode('trash')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Workspace settings', 'shield', state.mode === 'settings', () => changeMode('settings')), (isAdmin() || ws?.myRole === 'OWNER') && navButton('Analytics', 'clock', state.mode === 'analytics', () => changeMode('analytics')), isAdmin() && navButton('Audit log', 'clock', state.mode === 'audit', () => changeMode('audit')), isAdmin() && navButton('Failed jobs', 'refresh', state.mode === 'jobs', () => changeMode('jobs'))));
   const sidebar = el('aside', { class: 'sidebar' }, brand(), el('nav', { 'aria-label': 'Main navigation' }, workspaceNav, toolsNav), el('div', { class: 'sidebar-footer' }, ws && el('div', {}, el('div', { class: 'quota-label' }, el('span', {}, 'Workspace storage'), el('span', {}, `${Math.round((ws.usedBytes || 0) / ws.quotaBytes * 100)}%`)), el('div', { class: 'quota-track' }, el('progress', { max: ws.quotaBytes, value: ws.usedBytes || 0, 'aria-label': 'Storage used' })), el('div', { class: 'storage-caption' }, `${bytes(ws.usedBytes)} of ${bytes(ws.quotaBytes)} used`)), el('p', { class: 'storage-caption sidebar-caption' }, 'A little order. A lot of possibility.')));
   const searchInput = el('input', { type: 'search', placeholder: 'Search files in this workspace…', 'aria-label': 'Search filenames', minlength: '2', maxlength: '128', value: state.mode === 'search' ? state.query : '', disabled: !ws, name: 'q' });
   const search = el('form', { class: 'search', role: 'search', onsubmit: event => { event.preventDefault(); const query = searchInput.value.trim(); if (query.length >= 2) { state.query = query; run(() => changeMode('search')); } else searchInput.reportValidity(); } }, icon('search'), searchInput, el('button', { class: 'button subtle small', type: 'submit', disabled: !ws }, 'Search'));
@@ -133,7 +133,10 @@ async function selectWorkspace(workspace) {
 async function changeMode(mode) {
   state.mode = mode; state.items = []; state.cursor = null;
   renderShell();
-  if (mode === 'settings') await renderSettings(); else await loadItems();
+  if (mode === 'settings') await renderSettings();
+  else if (mode === 'analytics') await renderAnalytics();
+  else if (mode === 'jobs') await renderJobs();
+  else await loadItems();
 }
 function empty(title, message, symbol = 'folder', extra) {
   return el('div', { class: 'empty' }, icon(symbol), el('h3', {}, title), el('p', {}, message), extra);
@@ -297,7 +300,16 @@ function renderAudit() {
   $('#main').replaceChildren(heading('Audit log', 'A record of file activity, access changes, and security decisions.', [button('Refresh', () => loadItems(), { icon: 'refresh' })]), el('section', { class: 'panel', 'aria-label': 'Audit events' }, state.items.length ? el('div', { class: 'table-wrap' }, table) : empty('No events yet', 'Activity will appear here as people use FileFlow.', 'clock'), el('div', { class: 'table-footer' }, `${state.items.length} events`, state.cursor && button('Load more', () => loadItems(true), { class: 'small' }))));
 }
 async function refreshStorage() {
-  try { state.workspaces = await api('/workspaces'); if (state.workspace) state.workspace = state.workspaces.find(ws => ws.id === state.workspace.id) || state.workspace; }
+  try {
+    state.workspaces = await api('/workspaces');
+    if (state.workspace) state.workspace = state.workspaces.find(ws => ws.id === state.workspace.id) || state.workspace;
+    const ws = state.workspace, track = $('.quota-track progress');
+    if (ws && track) {
+      track.max = ws.quotaBytes; track.value = ws.usedBytes || 0;
+      $('.quota-label span:last-child').textContent = `${Math.round((ws.usedBytes || 0) / ws.quotaBytes * 100)}%`;
+      $('.sidebar-footer .storage-caption').textContent = `${bytes(ws.usedBytes)} of ${bytes(ws.quotaBytes)} used`;
+    }
+  }
   catch { /* The next browse action will surface a persistent connection error. */ }
 }
 
@@ -514,3 +526,62 @@ async function boot() {
   } catch (error) { renderShell(); $('#main').replaceChildren(empty('Could not open your workspace', error.message, 'refresh', button('Try again', boot))); }
 }
 boot();
+
+async function renderJobs() {
+  const generation = ++state.loadGeneration;
+  renderLoading();
+  const response = await api('/admin/jobs');
+  if (generation !== state.loadGeneration) return;
+  const jobs = response.items || response;
+  const rows = jobs.map(job => el('tr', {},
+    el('td', {}, el('strong', {}, job.kind), el('div', { class: 'muted small' }, `${job.attempts} attempts`)),
+    el('td', { class: 'mono' }, job.target_id || job.targetId),
+    el('td', {}, date(job.updated_at || job.updatedAt)),
+    el('td', {}, job.error_code || job.errorCode || 'Unknown error'),
+    el('td', {}, button('Retry job', async () => {
+      await api(`/admin/jobs/${job.id}/retry`, { method: 'POST' });
+      notify('Job queued for another attempt.');
+      await renderJobs();
+    }, { class: 'small' }))
+  ));
+  const table = el('table', { class: 'audit-table' },
+    el('thead', {}, el('tr', {}, ['Job', 'Target', 'Last attempt', 'Reason', 'Action'].map(label => el('th', { scope: 'col' }, label)))),
+    el('tbody', {}, rows)
+  );
+  $('#main').replaceChildren(heading('Failed jobs', 'Review background work that needs attention.', [button('Refresh', renderJobs, { icon: 'refresh' })]), el('div', { class: 'info-strip' }, icon('shield'), el('div', {}, 'Files stay unavailable until verification succeeds. After resolving the underlying issue, retry the job to continue its checks.')), el('section', { class: 'panel', 'aria-label': 'Failed background jobs' }, jobs.length ? el('div', { class: 'table-wrap' }, table) : empty('All clear', 'There are no failed background jobs to retry.', 'shield')));
+}
+async function renderAnalytics() {
+  const generation = ++state.loadGeneration;
+  renderLoading();
+  const spaces = isAdmin() ? await api('/admin/workspaces') : state.workspaces.filter(ws => ws.myRole === 'OWNER');
+  if (generation !== state.loadGeneration) return;
+  const scope = el('select', { name: 'analyticsWorkspace', 'aria-label': 'Analytics workspace' }, isAdmin() && el('option', { value: '' }, 'All workspaces'), (spaces.items || spaces).map(ws => el('option', { value: ws.id, selected: !isAdmin() && ws.id === state.workspace?.id }, ws.name)));
+  const days = el('select', { name: 'analyticsDays', 'aria-label': 'Analytics period' }, el('option', { value: '7' }, 'Last 7 days'), el('option', { value: '30' }, 'Last 30 days'));
+  const body = el('div');
+  let requestGeneration = 0;
+  async function refresh() {
+    const current = ++requestGeneration;
+    body.replaceChildren(empty('Loading activity…', 'Calculating activity for this period.', 'clock'));
+    const query = new URLSearchParams({ days: days.value });
+    if (scope.value) query.set('workspaceId', scope.value);
+    const data = await api(`/analytics?${query}`);
+    if (generation !== state.loadGeneration || current !== requestGeneration) return;
+    const quality = data.quality || {};
+    const notes = [...(quality.notes || [])];
+    if (quality.isSynthetic) notes.unshift('This period includes synthetic development or test activity.');
+    if (quality.incomplete) notes.unshift('Some activity is not available for this period.');
+    if (data.privacySuppressed) notes.unshift('Totals are hidden because this scope has fewer than five distinct participants.');
+    const metrics = el('div', { class: 'metric-grid' }, (data.metrics || []).map(metric => {
+      let value = metric.value === null || metric.value === undefined ? metric.status === 'suppressed' ? 'Private' : 'Unavailable' : typeof metric.value === 'number' ? metric.value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(metric.value);
+      const unit = metric.value === null || metric.value === undefined ? '' : ({ percent: '%', seconds: 's', count: '' }[metric.unit] ?? metric.unit);
+      return el('article', { class: 'panel metric-card' }, el('div', { class: 'metric-label' }, metric.label), el('div', { class: `metric-value ${metric.value === null || metric.value === undefined ? 'missing' : ''}` }, value, unit && el('span', {}, unit)), el('p', { class: 'muted small' }, `${metric.id} · ${metric.status || 'observed'}${metric.sampleSize !== undefined && metric.sampleSize !== null ? ` · ${metric.sampleSize} samples` : ''}`));
+    }));
+    function funnel(title, dataPoints, rows) {
+      return el('section', { class: 'panel admin-card' }, el('h2', {}, title), el('div', { class: 'funnel' }, rows.map(([key, label]) => el('div', { class: 'funnel-row' }, el('span', {}, label), el('strong', {}, dataPoints?.[key] === null || dataPoints?.[key] === undefined ? '—' : Number(dataPoints[key]).toLocaleString())))), el('p', { class: 'muted small' }, `Mature: ${dataPoints?.mature ?? '—'} · Provisional: ${dataPoints?.provisional ?? '—'}`));
+    }
+    body.replaceChildren(el('div', { class: 'info-strip' }, icon('clock'), el('div', {}, `${date(data.period?.start)} – ${date(data.period?.end)} · ${data.period?.timezone || 'Europe/Kyiv'}`, el('div', { class: 'small' }, `Updated ${date(data.updatedAt)}. Download links issued measure access requests, not completed downloads.`))), ...notes.map(note => el('p', { class: 'callout' }, note)), metrics, el('div', { class: 'admin-grid analytics-funnels' }, funnel('From upload to access', data.funnels?.upload, [['initiated', 'Upload initiated'], ['committed', 'Version committed'], ['ready', 'Passed verification'], ['linkIssued', 'Download link issued']]), funnel('From sharing to access', data.funnels?.sharing, [['created', 'Share link created'], ['attempted', 'Access attempted'], ['resolved', 'Access granted']])));
+  }
+  scope.addEventListener('change', () => run(refresh)); days.addEventListener('change', () => run(refresh));
+  $('#main').replaceChildren(heading('Workspace activity', 'Understand how files move through your team.', [button('Refresh', refresh, { icon: 'refresh' })]), el('div', { class: 'form-row analytics-controls' }, field('Scope', scope), field('Period', days)), body);
+  await refresh();
+}
