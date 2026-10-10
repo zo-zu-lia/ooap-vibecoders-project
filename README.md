@@ -16,3 +16,16 @@
 | 6 | [Concurrency Patterns Usage](./docs/FileFlow_SRS/06-concurrency-patterns.md) | П’ять сценаріїв конкурентного виконання, діаграми послідовності та гарантії коректності |
 
 [OpenAPI-контракт](./docs/FileFlow_OpenAPI.yaml) описує 29 REST-операцій у форматі OpenAPI 3.0.3.
+
+## Додаткові моделі
+
+Другий етап завдання — до **10.12.2026**. Документи деталізують проєктні рішення; міграції, контейнери, dashboards і перевірки ще не реалізовані.
+
+| Документ | Зміст |
+|---|---|
+| [Data model](./docs/FileFlow_SRS/07-data-model.md) | 16 основних сутностей, ER-діаграми, класифікація й retention, consensus, batching, streaming, consistency |
+| [Resiliency model](./docs/FileFlow_SRS/08-resiliency-model.md) | CID із 5 взаємодіями, RMA workbook із 15 сценаріями відмов, recovery та fault injection |
+| [Security model](./docs/FileFlow_SRS/09-security-model.md) | 2 потоки з межами довіри, STRIDE, 10 загроз із mitigation plan |
+| [Deployment model](./docs/FileFlow_SRS/10-deployment-model.md) | Інфраструктурна діаграма однієї dev-VM, ресурси, мережа, release/rollback і backup |
+| [Analytics model](./docs/FileFlow_SRS/11-analytics-model.md) | 12 функціональних метрик із FR-зв'язками та 2 воронки |
+| [Monitoring & alerting model](./docs/FileFlow_SRS/12-monitoring-alerting-model.md) | 15 операційних метрик, 10 alert rules, пороги, відповідальні й mitigation |
