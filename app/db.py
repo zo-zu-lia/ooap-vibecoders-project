@@ -19,6 +19,13 @@ def initialize():
         conn.execute(Path(__file__).with_name('schema.sql').read_text())
         if settings.seed_demo:
             seed(conn)
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname='fileflow_app'").fetchone():
+            conn.execute('GRANT USAGE ON SCHEMA public TO fileflow_app')
+            conn.execute('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO fileflow_app')
+            conn.execute('GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO fileflow_app')
+            conn.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO fileflow_app')
+            conn.execute('REVOKE UPDATE,DELETE,TRUNCATE ON audit_events FROM fileflow_app')
+            conn.execute('GRANT SELECT,INSERT ON audit_events TO fileflow_app')
 
 
 def demo_id(n):

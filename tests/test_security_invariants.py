@@ -48,7 +48,7 @@ with connection() as conn:
         try:
             with conn.transaction():
                 conn.execute(operation,(row['id'],))
-        except psycopg.errors.RaiseException:
+        except (psycopg.errors.RaiseException,psycopg.errors.InsufficientPrivilege):
             blocked.append(True)
     conn.rollback()
 print(json.dumps({'blocked':blocked}))
