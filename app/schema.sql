@@ -112,3 +112,37 @@ CREATE OR REPLACE FUNCTION deny_audit_change() RETURNS trigger LANGUAGE plpgsql 
  BEGIN RAISE EXCEPTION 'audit_events is append-only'; END; $$;
 DROP TRIGGER IF EXISTS audit_append_only ON audit_events;
 CREATE TRIGGER audit_append_only BEFORE UPDATE OR DELETE ON audit_events FOR EACH ROW EXECUTE FUNCTION deny_audit_change();
+CREATE TABLE IF NOT EXISTS observability_scans (
+ outcome text NOT NULL,size_bucket text NOT NULL,count bigint NOT NULL DEFAULT 0,total double precision NOT NULL DEFAULT 0,
+ buckets jsonb NOT NULL,PRIMARY KEY(outcome,size_bucket)
+);
+CREATE TABLE IF NOT EXISTS observability_job_failures (
+ kind text NOT NULL,reason text NOT NULL,count bigint NOT NULL DEFAULT 0,PRIMARY KEY(kind,reason)
+);
+INSERT INTO observability_job_failures(kind,reason,count)
+ SELECT kind,reason,0 FROM unnest(ARRAY['SCAN','PURGE','CLEANUP','COMPLETE']) kind
+ CROSS JOIN unnest(ARRAY['LEASE_EXPIRED','SCANNER_UNAVAILABLE','STORAGE_UNAVAILABLE','INTERNAL_ERROR','OTHER']) reason
+ ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION count_job_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN
+  IF NEW.state='FAILED' AND OLD.state IS DISTINCT FROM 'FAILED' THEN
+   INSERT INTO observability_job_failures(kind,reason,count)
+    VALUES(NEW.kind,CASE WHEN NEW.error_code IN ('LEASE_EXPIRED','SCANNER_UNAVAILABLE','STORAGE_UNAVAILABLE','INTERNAL_ERROR') THEN NEW.error_code ELSE 'OTHER' END,1)
+    ON CONFLICT(kind,reason) DO UPDATE SET count=observability_job_failures.count+1;
+  END IF;
+  RETURN NEW;
+ END; $$;
+DROP TRIGGER IF EXISTS job_failure_counter ON jobs;
+CREATE TRIGGER job_failure_counter AFTER UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION count_job_failure();
+CREATE TABLE IF NOT EXISTS analytics_events (
+ id uuid PRIMARY KEY,event_name text NOT NULL CHECK(event_name IN ('activity.authorized','download.link_issued','share.resolve_attempted','share.resolve_succeeded','search.executed','version.complete_attempted','file.recover_attempted')),
+ actor_key text,workspace_id uuid REFERENCES workspaces(id),resource_id uuid,version_no integer,
+ operation_key text NOT NULL UNIQUE,result text NOT NULL,reason_code text,result_bucket text,
+ occurred_at timestamptz NOT NULL DEFAULT now(),is_synthetic boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS analytics_events_period ON analytics_events(workspace_id,occurred_at,event_name);
+CREATE INDEX IF NOT EXISTS analytics_events_resource ON analytics_events(resource_id,event_name,occurred_at);
+CREATE TABLE IF NOT EXISTS analytics_daily (
+ day date NOT NULL,scope text NOT NULL,metrics jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(day,scope)
+);
+INSERT INTO app_metadata(key,value) VALUES ('analytics_started_at',now()::text) ON CONFLICT DO NOTHING;

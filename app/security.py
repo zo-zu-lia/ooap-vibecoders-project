@@ -152,9 +152,20 @@ def internal_url(url):
     return settings.oidc_internal_url + url[len(settings.oidc_issuer):]
 
 
+def oidc_http(method,url,operation,**kwargs):
+    from .observability import dependency_result
+    try:
+        response=httpx.request(method,url,**kwargs)
+    except httpx.HTTPError:
+        dependency_result('oidc',operation,'failure')
+        raise
+    dependency_result('oidc',operation,'failure' if response.status_code>=500 or response.status_code==429 else 'success')
+    return response
+
+
 def oidc_metadata():
     try:
-        response = httpx.get(settings.oidc_internal_url+'/.well-known/openid-configuration',timeout=5)
+        response = oidc_http('GET',settings.oidc_internal_url+'/.well-known/openid-configuration','discovery',timeout=5)
         response.raise_for_status()
         meta = response.json()
         if meta['issuer'] != settings.oidc_issuer:
@@ -168,7 +179,7 @@ def oidc_metadata():
 
 def token_request(meta, data):
     try:
-        response = httpx.post(internal_url(meta['token_endpoint']),data={**data,'client_id':settings.oidc_client_id,
+        response = oidc_http('POST',internal_url(meta['token_endpoint']),'token',data={**data,'client_id':settings.oidc_client_id,
                              'client_secret':settings.oidc_client_secret},timeout=8)
         response.raise_for_status()
         return response.json()
@@ -181,7 +192,7 @@ def verify_token(meta, token, nonce=None):
         header = jwt.get_unverified_header(token)
         if header.get('alg') != 'RS256':
             raise ValueError('Unexpected signing algorithm')
-        response = httpx.get(internal_url(meta['jwks_uri']),timeout=5)
+        response = oidc_http('GET',internal_url(meta['jwks_uri']),'jwks',timeout=5)
         response.raise_for_status()
         keys = response.json()['keys']
         jwk = next(k for k in keys if k['kid']==header['kid'] and k.get('kty')=='RSA')
