@@ -243,6 +243,7 @@ def trash(workspaceId: UUID,actor: Actor=Depends(get_actor)):
 @router.post('/files/{fileId}/recover')
 def recover(fileId: UUID,request: Request,actor: Actor=Depends(get_actor),idempotency_key: str|None=Header(None)):
     operation=f'POST /files/{fileId}/recover'
+    request.state.analytics_attempt=dict(event_name='file.recover_attempted',resource_id=fileId,operation_id=idempotency_key or request.state.request_id)
     with connection() as conn:
         row=file_access(conn,actor,fileId,'EDITOR','update',allow_deleted=True)
         previous=idempotency_get(conn,actor.id,operation,idempotency_key,{})
@@ -365,6 +366,7 @@ def resolve_share(body: ResolveInput,request: Request,actor: Actor=Depends(get_a
         share=conn.execute('SELECT * FROM share_links WHERE secret_hash=%s FOR SHARE',(digest(body.token),)).fetchone()
         if share['recipient_user_id']!=actor.id:
             raise Problem(403,'ACCESS_DENIED','This link is assigned to another corporate recipient.')
+        request.state.analytics_attempt=dict(event_name='share.resolve_attempted',workspace_id=loc['workspace_id'],resource_id=share['id'],operation_id=request.state.request_id)
         if share['revoked_at'] or share['expires_at']<=now():
             raise Problem(404,'NOT_FOUND','Share link has expired or been revoked.')
         row=conn.execute("SELECT * FROM files WHERE id=%s AND purge_state='ACTIVE' FOR SHARE",(share['file_id'],)).fetchone()
@@ -372,11 +374,13 @@ def resolve_share(body: ResolveInput,request: Request,actor: Actor=Depends(get_a
             raise Problem(404,'NOT_FOUND','Shared file is no longer available.')
         download=download_for_file(conn,row,actor,request.state.request_id)
         audit(conn,actor.id,'SHARE_RESOLVED',row['id'],request.state.request_id,workspace_id=row['workspace_id'])
+        from .analytics import record_event
+        record_event(conn,event_name='share.resolve_succeeded',actor_id=actor.id,workspace_id=row['workspace_id'],resource_id=share['id'],operation_id=request.state.request_id)
         return dict(fileId=row['id'],fileName=row['name'],download=download)
 
 
 @router.get('/search')
-def search(workspaceId: UUID,q: str=Query(min_length=2,max_length=128),cursor: str|None=Query(None,max_length=4096),actor: Actor=Depends(get_actor)):
+def search(request: Request,workspaceId: UUID,q: str=Query(min_length=2,max_length=128),cursor: str|None=Query(None,max_length=4096),actor: Actor=Depends(get_actor)):
     with connection() as conn:
         lock_workspace(conn,workspaceId)
         inherited=workspace_role(conn,actor.id,workspaceId)
@@ -392,6 +396,8 @@ def search(workspaceId: UUID,q: str=Query(min_length=2,max_length=128),cursor: s
              AND (%s OR EXISTS(SELECT 1 FROM file_permissions p WHERE p.file_id=files.id AND p.user_id=%s))
              AND (%s::text IS NULL OR (normalized_name,id)>(%s,%s::uuid)) ORDER BY normalized_name,id LIMIT 101''',
              (workspaceId,pattern,bool(inherited),actor.id,pos[0] if pos else None,pos[0] if pos else None,pos[1] if pos else None)).fetchall()
+        request.state.analytics_search=dict(workspace_id=workspaceId,result_bucket='zero' if not rows else 'one_or_more')
+        request.state.analytics_workspace=workspaceId
         return dict(items=[file_json(conn,row,actor) for row in rows[:100]],
                     nextCursor=cursor_encode([rows[99]['normalized_name'],rows[99]['id']],scope) if len(rows)>100 else None)
 
@@ -430,3 +436,11 @@ def retry_job(jobId: UUID,request: Request,actor: Actor=Depends(get_actor)):
             raise Problem(409,'INVALID_STATE','Only a failed job can be retried.')
         audit(conn,actor.id,'JOB_RETRIED',jobId,request.state.request_id)
         return dict(id=jobId,status='QUEUED')
+
+
+@router.get('/shared-files')
+def shared_files(actor: Actor=Depends(get_actor)):
+    with connection() as conn:
+        rows=conn.execute("""SELECT f.* FROM files f JOIN file_permissions p ON p.file_id=f.id
+           WHERE p.user_id=%s AND f.purge_state='ACTIVE' ORDER BY f.updated_at DESC LIMIT 500""",(actor.id,)).fetchall()
+        return [file_json(conn,row,actor) for row in rows]

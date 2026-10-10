@@ -1,6 +1,7 @@
 """ASGI application and dependency health probes."""
 import logging
 import os
+import time
 from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 
-from . import core, security, storage, uploads
+from . import analytics, core, observability, security, storage, uploads
 from .config import settings
 from .db import connection
 from .errors import Problem, problem_response
@@ -26,7 +27,9 @@ log = logging.getLogger('fileflow')
 async def lifespan(app):
     security.cipher()  # Fail startup for missing/weak encryption key.
     storage.initialize_bucket()
+    analytics.start()
     yield
+    analytics.stop()
 
 
 app = FastAPI(title='FileFlow',version='1.0.0',lifespan=lifespan,docs_url=None,redoc_url=None)
@@ -35,7 +38,16 @@ app = FastAPI(title='FileFlow',version='1.0.0',lifespan=lifespan,docs_url=None,r
 @app.middleware('http')
 async def security_headers(request, call_next):
     request.state.request_id = str(uuid4())
-    response = await call_next(request)
+    started=time.perf_counter()
+    status=500
+    try:
+        response = await call_next(request)
+        status=response.status_code
+    finally:
+        if request.url.path.startswith('/api/v1/'):
+            route=getattr(request.scope.get('route'),'path','unmatched')
+            observability.observe_http(route,request.method,status,time.perf_counter()-started)
+            analytics.observe_request(request,status)
     response.headers['X-Request-ID'] = request.state.request_id
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -52,6 +64,7 @@ async def security_headers(request, call_next):
 
 @app.exception_handler(Problem)
 async def handle_problem(request, exc):
+    request.state.problem_code=exc.code
     if exc.status in (401,403) and request.url.path.startswith('/api/'):
         # Independent append-only denial event: the domain transaction already rolled back.
         try:
@@ -109,20 +122,12 @@ def ready():
 
 @app.get('/metrics')
 def metrics():
-    # Internal service endpoint; the public reverse proxy restricts access.
-    with connection() as conn:
-        jobs=conn.execute('SELECT state,count(*) AS n FROM jobs GROUP BY state').fetchall()
-        pending=conn.execute("SELECT count(*) AS n FROM file_versions WHERE scan_status='PENDING_SCAN'").fetchone()['n']
-        old=conn.execute("SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0) AS n FROM jobs WHERE state IN ('QUEUED','RUNNING')").fetchone()['n']
-    output=['# HELP fileflow_jobs Number of durable jobs by state.','# TYPE fileflow_jobs gauge']
-    output += [f'fileflow_jobs{{state="{r["state"]}"}} {r["n"]}' for r in jobs]
-    output += ['# TYPE fileflow_pending_scans gauge',f'fileflow_pending_scans {pending}',
-               '# TYPE fileflow_oldest_job_seconds gauge',f'fileflow_oldest_job_seconds {old}']
-    return Response('\n'.join(output)+'\n',media_type='text/plain; version=0.0.4')
+    return Response(observability.render_metrics(),media_type='text/plain; version=0.0.4')
 
 
 app.include_router(security.router)
 app.include_router(core.router)
+app.include_router(analytics.router)
 app.include_router(uploads.router,prefix='/api/v1')
 static_dir = Path(__file__).with_name('static')
 static_dir.mkdir(exist_ok=True)
