@@ -92,3 +92,12 @@ def test_manifest_rejects_duplicate_and_out_of_order_parts(monkeypatch):
         with pytest.raises(storage.InvalidManifest):
             storage.validate_parts({"part_count": 2}, [{"partNumber": n, "etag": "x"} for n in numbers])
     s3.get_paginator.assert_not_called()
+
+
+def test_part_capability_binds_the_exact_reserved_size(monkeypatch):
+    signer = Mock()
+    monkeypatch.setattr(storage, "client", lambda *args: signer)
+    upload = dict(object_key="x", storage_upload_id="u", part_size_bytes=storage.PART_SIZE,
+                  size_bytes=storage.PART_SIZE + 7)
+    storage.part_url(upload, 2)
+    assert signer.generate_presigned_url.call_args.kwargs["Params"]["ContentLength"] == 7

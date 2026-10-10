@@ -103,10 +103,14 @@ def create_multipart(upload: dict) -> str:
 
 
 def part_url(upload: dict, part: int, expires: int = 900) -> str:
+    expected_size = min(upload["part_size_bytes"], upload["size_bytes"] - (part - 1) * upload["part_size_bytes"])
     return client(True).generate_presigned_url(
         "upload_part",
         Params={"Bucket": BUCKET, "Key": upload["object_key"],
-                "UploadId": upload["storage_upload_id"], "PartNumber": part},
+                "UploadId": upload["storage_upload_id"], "PartNumber": part,
+                # Browsers set this header from the Blob size. Signing it stops
+                # direct PUTs from exceeding the workspace's reserved quota.
+                "ContentLength": expected_size},
         ExpiresIn=expires,
         HttpMethod="PUT",
     )
