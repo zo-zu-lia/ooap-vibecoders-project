@@ -1,6 +1,6 @@
 # Upstream retired prebuilt community images. Build the fixed official source.
 # One compilation at a time bounds memory consumption on a development machine.
-FROM golang:1.25-alpine AS build
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS build
 RUN apk add --no-cache git
 WORKDIR /src
 RUN git init && git remote add origin https://github.com/minio/minio.git \
@@ -9,7 +9,7 @@ RUN git init && git remote add origin https://github.com/minio/minio.git \
 ENV GOMAXPROCS=2 GOMEMLIMIT=2GiB CGO_ENABLED=0
 RUN go build -p 1 -trimpath -ldflags="-s -w" -o /minio .
 
-FROM alpine:3.22
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 RUN apk add --no-cache ca-certificates && adduser -D -u 10001 minio \
     && mkdir /data && chown minio /data
 COPY --from=build /minio /usr/local/bin/minio

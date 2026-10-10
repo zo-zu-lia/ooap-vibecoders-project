@@ -12,10 +12,18 @@ os.umask(0o077)
 local = ROOT / '.local'
 local.mkdir(exist_ok=True, mode=0o700)
 (local / 'dex-data').mkdir(exist_ok=True, mode=0o700)
+(local / 'metrics').mkdir(exist_ok=True, mode=0o755)
+(local / 'metrics').chmod(0o755)
 if (ROOT / '.env').exists():
     if not (local / 'dex.yaml').exists():
         sys.exit('Existing .env but missing Dex configuration; restore .local/dex.yaml before starting.')
-    print('Existing local configuration preserved. Credentials: .local/credentials.txt')
+    existing=dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines() if line and not line.startswith('#'))
+    if 'APP_DB_PASSWORD' not in existing:
+        existing['APP_DB_PASSWORD']=secrets.token_hex(24)
+        existing['MIGRATION_DATABASE_URL']=existing['DATABASE_URL']
+        existing['DATABASE_URL']=f"postgresql://fileflow_app:{existing['APP_DB_PASSWORD']}@postgres:5432/fileflow"
+        (ROOT/'.env').write_text('\n'.join(f'{k}={v}' for k,v in existing.items())+'\n')
+    print('Existing local secrets preserved. Credentials: .local/credentials.txt')
     sys.exit(0)
 try:
     import bcrypt
@@ -23,13 +31,16 @@ except ImportError:
     sys.exit('Install setup dependency first: python3 -m pip install bcrypt')
 
 pg = secrets.token_hex(24)
+app_db = secrets.token_hex(24)
 s3 = secrets.token_hex(24)
 oidc = secrets.token_hex(32)
 app = secrets.token_hex(32)
 password = secrets.token_urlsafe(18)
 env = {
     'POSTGRES_PASSWORD': pg,
-    'DATABASE_URL': f'postgresql://fileflow:{pg}@postgres:5432/fileflow',
+    'APP_DB_PASSWORD': app_db,
+    'MIGRATION_DATABASE_URL': f'postgresql://fileflow:{pg}@postgres:5432/fileflow',
+    'DATABASE_URL': f'postgresql://fileflow_app:{app_db}@postgres:5432/fileflow',
     'APP_ORIGIN': 'http://localhost:8080',
     'APP_SECRET': app,
     'COOKIE_SECURE': 'false',
