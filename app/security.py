@@ -12,7 +12,7 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 import jwt
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import RedirectResponse
@@ -323,8 +323,12 @@ def get_actor(request: Request):
         if session['identity_checked_at']<now()-timedelta(seconds=240):
             if not session['refresh_token_encrypted']:
                 raise Problem(401,'UNAUTHENTICATED','Corporate identity needs to be verified again.')
+            try:
+                refresh_token = cipher().decrypt(session['refresh_token_encrypted'].encode()).decode()
+            except InvalidToken:
+                raise Problem(401,'UNAUTHENTICATED','Your session expired. Please sign in again.') from None
             meta = oidc_metadata()
-            tokens = token_request(meta,dict(grant_type='refresh_token',refresh_token=cipher().decrypt(session['refresh_token_encrypted'].encode()).decode()))
+            tokens = token_request(meta,dict(grant_type='refresh_token',refresh_token=refresh_token))
             claims = verify_token(meta,tokens.get('id_token',''))
             sync_identity(conn,claims,session['user_id'])
             encrypted = cipher().encrypt(tokens['refresh_token'].encode()).decode() if tokens.get('refresh_token') else session['refresh_token_encrypted']

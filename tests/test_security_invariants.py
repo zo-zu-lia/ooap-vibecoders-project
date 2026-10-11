@@ -84,6 +84,29 @@ with connection() as conn:
         api.client.close()
 
 
+def test_session_encrypted_with_previous_key_requires_sign_in():
+    import hashlib
+    api=API('viewer')
+    try:
+        key=hashlib.sha256(api.client.cookies.get('fileflow_session').encode()).hexdigest()
+        database_check(f'''
+from app.db import connection
+from cryptography.fernet import Fernet
+with connection() as conn:
+    conn.execute("UPDATE sessions SET identity_checked_at=now()-interval '10 minutes',refresh_token_encrypted=%s WHERE id_hash=%s",
+                 (Fernet(Fernet.generate_key()).encrypt(b'previous-key-token').decode(),'{key}'))
+''')
+        api.get('/me',expected=401)
+        api.get('/workspaces',expected=401)
+    finally:
+        api.client.close()
+    replacement=API('viewer')
+    try:
+        assert replacement.get('/me')['id']==api.me['id']
+    finally:
+        replacement.client.close()
+
+
 def test_share_secret_only_appears_in_encrypted_replay_cache(accounts):
     owner=accounts['owner']
     file_id=owner.upload(name='encrypted-share-'+uuid4().hex+'.txt')['fileId']
