@@ -77,6 +77,39 @@ connections, worker four). The worker processes one job at a time and streams
 file bytes in small buffers. Browser hashing runs incrementally in a worker,
 and at most four 8 MiB parts upload concurrently.
 
+### Startup troubleshooting
+
+If `migrate` exits with `password authentication failed`, inspect its logs:
+
+```sh
+./scripts/compose.sh logs --tail=50 migrate
+```
+
+`POSTGRES_PASSWORD` and the initialization scripts only configure a new
+database volume. Recreating containers with changed credentials does not update
+the passwords already stored in PostgreSQL. When the intended local passwords
+are those in `.env`, repair the roles without deleting the volume:
+
+```sh
+./scripts/repair-db-credentials.sh
+./scripts/compose.sh up -d --wait
+```
+
+The repair uses the local PostgreSQL administrator socket and changes only the
+two database role passwords, creating the application role if it is missing.
+It preserves tables and data. Do not use `down -v` to resolve this error.
+
+An orphan warning naming Prometheus, Alertmanager, Blackbox or Node Exporter
+means the monitoring overlay was omitted from the current command. Keep using
+both files when managing a deployment with monitoring enabled:
+
+```sh
+./scripts/compose.sh -f compose.yaml -f compose.monitoring.yaml up -d --wait
+```
+
+That warning does not cause migration failure. `--remove-orphans` would remove
+those monitoring services.
+
 ## Implemented behavior
 
 - All 29 documented REST operations, plus authenticated directory, direct-grant

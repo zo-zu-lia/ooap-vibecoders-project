@@ -76,4 +76,7 @@ def seed(conn):
 
 
 if __name__ == "__main__":
-    initialize()
+    try:
+        initialize()
+    finally:
+        close_pool()
