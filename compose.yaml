@@ -1,0 +1,158 @@
+name: fileflow
+x-app: &app
+  image: fileflow:local
+  build: .
+  environment: &app-environment
+    DATABASE_URL: ${DATABASE_URL}
+    APP_ORIGIN: ${APP_ORIGIN}
+    APP_SECRET: ${APP_SECRET}
+    COOKIE_SECURE: ${COOKIE_SECURE}
+    LOCAL_DEMO: ${LOCAL_DEMO}
+    OIDC_ISSUER: ${OIDC_ISSUER}
+    OIDC_INTERNAL_URL: ${OIDC_INTERNAL_URL}
+    OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+    OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+    S3_ENDPOINT: ${S3_ENDPOINT}
+    S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+    S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+    S3_SECRET_KEY: ${S3_SECRET_KEY}
+    S3_BUCKET: ${S3_BUCKET}
+    S3_REGION: ${S3_REGION}
+    CLAMAV_HOST: ${CLAMAV_HOST}
+    CLAMAV_PORT: ${CLAMAV_PORT}
+  restart: unless-stopped
+  init: true
+  mem_limit: 384m
+  cpus: 1.0
+  pids_limit: 100
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: fileflow
+      POSTGRES_USER: fileflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/setup.py first}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/init-db.sh:/docker-entrypoint-initdb.d/10-application-role.sh:ro
+    command: [postgres, -c, shared_buffers=96MB, -c, max_connections=40, -c, work_mem=4MB]
+    mem_limit: 384m
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U fileflow -d fileflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  storage:
+    image: fileflow-storage:local
+    build:
+      context: .
+      dockerfile: infra/storage.Dockerfile
+    command: [server, /data, --console-address, ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:8080
+      MINIO_API_STALE_UPLOADS_EXPIRY: 48h
+      MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL: 6h
+    ports: ["127.0.0.1:9000:9000"]
+    volumes: [objects:/data]
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://localhost:9000/minio/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  dex:
+    image: ghcr.io/dexidp/dex:v2.43.1@sha256:0881d3c9359b436d585b2061736ce271c100331e073be9178ef405ce5bf09557
+    entrypoint: [/usr/local/bin/dex]
+    command: [serve, /etc/dex/config.yaml]
+    user: "1000:1000"
+    volumes:
+      - ./.local/dex.yaml:/etc/dex/config.yaml:ro
+      - ./.local/dex-data:/var/dex
+    mem_limit: 128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+  antivirus:
+    image: clamav/clamav:stable_base@sha256:7769870154c74ce31b0047dd8771e81f7c4269278bc005782e9e419e4922c73d
+    volumes:
+      - avdata:/var/lib/clamav
+      - ./infra/clamd.conf:/etc/clamav/clamd.conf:ro
+    mem_limit: 2304m
+    cpus: 1.5
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "test \"$$(echo PING | nc -w 2 127.0.0.1 3310)\" = PONG"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+  migrate:
+    <<: *app
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${MIGRATION_DATABASE_URL}
+    command: [python, -m, app.db]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    <<: *app
+    environment:
+      <<: *app-environment
+      DB_POOL_SIZE: "8"
+      APP_COMPONENT: api
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage: {condition: service_healthy}
+      dex: {condition: service_started}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  worker:
+    <<: *app
+    environment:
+      <<: *app-environment
+      DB_POOL_SIZE: "4"
+      APP_COMPONENT: worker
+    command: [python, -m, app.worker]
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, -c, "import os,time; assert time.time()-os.stat('/tmp/fileflow-worker-heartbeat').st_mtime < 90"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage: {condition: service_healthy}
+      antivirus: {condition: service_healthy}
+  proxy:
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: [./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro]
+    mem_limit: 64m
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+      dex: {condition: service_started}
+
+volumes:
+  pgdata:
+  objects:
+  avdata:
+
