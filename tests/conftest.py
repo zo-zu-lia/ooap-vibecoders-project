@@ -72,16 +72,21 @@ class API:
         form.fields.update(login=f'{role}@fileflow.local', password=password)
         response = self.client.post(urljoin(str(page.url), form.action), data=form.fields)
         assert response.status_code == 200, f'OIDC login failed: {response.status_code}'
-        me = self.client.get('/api/v1/me')
-        assert me.status_code == 200, f'OIDC session failed: {me.text}'
-        self.me = me.json()
+        self.me = self.get('/me')
         self.client.headers.update({'X-CSRF-Token': self.me['csrfToken'], 'Origin': ORIGIN})
 
     def request(self, method, route, *, expected=200, key=None, **kwargs):
         headers = kwargs.pop('headers', {})
         if method.upper() == 'POST':
             headers.setdefault('Idempotency-Key', key or str(uuid4()))
-        r = self.client.request(method, '/api/v1' + route, headers=headers, **kwargs)
+        for attempt in range(4):
+            r = self.client.request(method, '/api/v1' + route, headers=headers, **kwargs)
+            if (r.status_code != 429 or expected == 429 or attempt == 3
+                    or r.json().get('code') != 'RATE_LIMITED'):
+                break
+            # Exercise the deployed limiter, retaining the exact request and
+            # idempotency key while respecting its retry window.
+            time.sleep(min(60, max(1, int(r.headers.get('Retry-After', '30')))))
         assert r.status_code == expected, f'{method} {route}: expected {expected}, got {r.status_code}: {r.text[:600]}'
         if expected >= 400:
             assert r.headers['content-type'].startswith('application/problem+json')
