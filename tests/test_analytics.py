@@ -86,3 +86,22 @@ print(json.dumps(result))
     assert result['funnels']['upload']==dict(initiated=10,committed=8,ready=6,linkIssued=3,mature=10,provisional=0)
     assert result['funnels']['sharing']==dict(created=5,attempted=4,resolved=3,mature=5,provisional=0)
     assert result['downloadObservations']==3,'Ten replays must count as one issuance event'
+
+
+def test_operational_metrics_keep_labels_bounded(accounts):
+    accounts['owner'].get(f'/workspaces/{WORKSPACE}/items')
+    result=subprocess.run([str(ROOT/'scripts/compose.sh'),'exec','-T','api','python','-c',
+        "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())"],
+        text=True,capture_output=True,timeout=30)
+    assert result.returncode==0,result.stderr
+    metrics=result.stdout
+    assert 'fileflow_http_requests_total' in metrics
+    assert 'fileflow_http_request_duration_seconds_bucket' in metrics
+    assert 'le="0.7"' in metrics
+    assert 'fileflow_jobs_oldest_unfinished_age_seconds' in metrics
+    assert 'fileflow_jobs_failed_total' in metrics
+    assert 'fileflow_db_connection_budget' in metrics
+    assert '/api/v1/workspaces/{workspaceId}/items' in metrics
+    assert WORKSPACE not in metrics
+    assert '@fileflow.local' not in metrics
+    assert 'X-Amz-Signature' not in metrics
