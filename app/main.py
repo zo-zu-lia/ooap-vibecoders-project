@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg_pool import PoolTimeout,TooManyRequests
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,7 +18,7 @@ from starlette.exceptions import HTTPException
 
 from . import analytics, core, observability, security, storage, uploads
 from .config import settings
-from .db import connection
+from .db import connection,close_pool
 from .errors import Problem, problem_response
 
 log = logging.getLogger('fileflow')
@@ -30,6 +31,7 @@ async def lifespan(app):
     analytics.start()
     yield
     analytics.stop()
+    close_pool()
 
 
 app = FastAPI(title='FileFlow',version='1.0.0',lifespan=lifespan,docs_url=None,redoc_url=None)
@@ -91,6 +93,8 @@ async def handle_unique(request,exc):
     return problem_response(request,Problem(409,'NAME_CONFLICT','An object or identity with that name already exists.'))
 
 
+@app.exception_handler(PoolTimeout)
+@app.exception_handler(TooManyRequests)
 @app.exception_handler(psycopg.OperationalError)
 @app.exception_handler(psycopg.errors.LockNotAvailable)
 @app.exception_handler(BotoCoreError)

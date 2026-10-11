@@ -1,16 +1,41 @@
 """Short-lived PostgreSQL connections with explicit transaction boundaries."""
 from contextlib import contextmanager
+import os
+import threading
 from pathlib import Path
 from uuid import UUID
-import psycopg
+from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from .config import settings
 
+_pool=None
+_pool_lock=threading.Lock()
+
+
+def pool():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                size=max(1,min(16,int(os.getenv('DB_POOL_SIZE','8'))))
+                _pool=ConnectionPool(settings.database_url,min_size=1,max_size=size,
+                    timeout=8,max_waiting=80,open=False,
+                    kwargs=dict(row_factory=dict_row,connect_timeout=5,
+                                application_name=os.getenv('APP_COMPONENT','fileflow'),
+                                options='-c statement_timeout=15000 -c lock_timeout=10000'))
+                _pool.open(wait=False)
+    return _pool
+
+
 @contextmanager
 def connection():
-    with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=5,
-                         options='-c statement_timeout=15000 -c lock_timeout=10000') as conn:
+    with pool().connection() as conn:
         yield conn
+
+
+def close_pool():
+    if _pool:
+        _pool.close()
 
 
 def initialize():

@@ -109,6 +109,11 @@ def render_metrics():
              FROM pg_stat_activity WHERE datname=current_database()""").fetchone()
         budget=conn.execute("SELECT current_setting('max_connections')::integer-current_setting('superuser_reserved_connections')::integer AS n").fetchone()['n']
         pending=conn.execute("SELECT count(*) AS n FROM file_versions WHERE scan_status='PENDING_SCAN'").fetchone()['n']
+    av_counts={'success':0,'failure':0}
+    for row in scans:
+        av_counts['failure' if row['outcome']=='technical_failure' else 'success']+=row['count']
+    for result,count in av_counts.items():
+        output.append(f'fileflow_dependency_requests_total{labels(dependency="av",operation="scan",result=result)} {count}')
     output.append('# TYPE fileflow_jobs gauge')
     lookup={(j['kind'],j['state']):j['n'] for j in jobs}
     for kind in ('SCAN','PURGE','CLEANUP','COMPLETE'):
