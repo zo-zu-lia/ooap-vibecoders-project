@@ -364,7 +364,14 @@ def complete_upload(upload_id: UUID, body: CompleteBody, request: Request,
         except storage.InvalidManifest as exc:
             raise Problem(422, "INVALID_PARTS", str(exc)) from exc
         except Exception as exc:
-            raise Problem(503, "STORAGE_UNAVAILABLE", "Could not verify upload parts; retry shortly.") from exc
+            # Another complete request may have assembled this multipart after
+            # our initial session read. Once that durable operation exists,
+            # NoSuchUpload is expected and its manifest is authoritative.
+            with connection() as conn:
+                concurrent = _upload_access(conn, actor, upload_id)
+            if (concurrent["state"] not in {"COMPLETING", "PROCESSING", "READY", "REJECTED"}
+                    or concurrent["completion_hash"] != fingerprint):
+                raise Problem(503, "STORAGE_UNAVAILABLE", "Could not verify upload parts; retry shortly.") from exc
         with connection() as conn:
             current = _upload_access(conn, actor, upload_id, lock=True)
             if current["completion_hash"] and current["completion_hash"] != fingerprint:
