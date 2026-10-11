@@ -151,6 +151,10 @@ def create():
                        f'fileflow_last_verified_recovery_point_timestamp_seconds {datetime.fromisoformat(snapshot).timestamp()}\n')
     staging.chmod(0o644)
     staging.replace(output)
+    cutoff=time.time()-30*24*3600
+    for old in folder.glob('*.ffbackup'):
+        if old!=destination and old.stat().st_mtime<cutoff:
+            old.unlink()
     print(f'Created and verified {destination}; encryption key: .local/backup.key')
     return destination
 

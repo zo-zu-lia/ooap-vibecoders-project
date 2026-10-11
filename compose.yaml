@@ -110,6 +110,10 @@ services:
       postgres: {condition: service_healthy}
   api:
     <<: *app
+    environment:
+      <<: *app-environment
+      DB_POOL_SIZE: "8"
+      APP_COMPONENT: api
     depends_on:
       migrate: {condition: service_completed_successfully}
       storage: {condition: service_healthy}
@@ -121,8 +125,18 @@ services:
       retries: 10
   worker:
     <<: *app
+    environment:
+      <<: *app-environment
+      DB_POOL_SIZE: "4"
+      APP_COMPONENT: worker
     command: [python, -m, app.worker]
     stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, -c, "import os,time; assert time.time()-os.stat('/tmp/fileflow-worker-heartbeat').st_mtime < 90"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       migrate: {condition: service_completed_successfully}
       storage: {condition: service_healthy}

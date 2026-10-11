@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 # psql variables are quoted as SQL literals, never interpolated into shell code.
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  --set=app_password="$APP_DB_PASSWORD" <<'SQL'
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+\getenv app_password APP_DB_PASSWORD
 SELECT format('CREATE ROLE fileflow_app LOGIN PASSWORD %L', :'app_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='fileflow_app') \gexec
 GRANT CONNECT ON DATABASE fileflow TO fileflow_app;
