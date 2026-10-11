@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import AbstractContextManager
 from datetime import timedelta
+from pathlib import Path
 from uuid import uuid4
 
 from . import storage
@@ -24,6 +25,17 @@ log = logging.getLogger("fileflow.worker")
 STOP = threading.Event()
 LEASE_SECONDS = 120
 MAX_ATTEMPTS = 3
+HEARTBEAT_FILE = Path(os.getenv("WORKER_HEARTBEAT_FILE", "/tmp/fileflow-worker-heartbeat"))
+_last_health_stamp = 0.0
+
+
+def health_heartbeat():
+    """Called only after a committed database check or successful lease renew."""
+    global _last_health_stamp
+    instant = time.monotonic()
+    if instant - _last_health_stamp >= 10:
+        HEARTBEAT_FILE.touch(mode=0o600, exist_ok=True)
+        _last_health_stamp = instant
 
 
 class LeaseLost(RuntimeError):
@@ -89,6 +101,7 @@ class Lease(AbstractContextManager):
                 if not row:
                     self.lost.set()
                     return
+                health_heartbeat()
             except Exception:
                 # Losing contact with the lease store is not permission to
                 # publish a result. A future owner safely retries the stream.
@@ -338,6 +351,7 @@ def main():
                 reconcile()
                 last_reconcile = time.monotonic()
             job = claim_job()
+            health_heartbeat()
             if job:
                 process_job(job)
             else:
