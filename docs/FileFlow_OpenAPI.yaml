@@ -1,17 +1,21 @@
 # OpenAPI 3.0.3 contract — FileFlow (MVP)
-# This is a design specification, not an implemented service.
+# Implemented REST contract; local profile differences are documented in LOCAL_DEVELOPMENT.md.
 openapi: 3.0.3
 info:
   title: FileFlow — внутрішній корпоративний файловий сервіс
   version: 1.0.0
-  description: Проєктний контракт REST API для MVP однієї компанії. Доступ тільки через корпоративну BFF-сесію.
+  description: Контракт REST API для MVP однієї компанії. Доступ тільки через корпоративну BFF-сесію.
     Вміст файлів передається безпосередньо до приватного S3-сумісного сховища за короткоживучими підписаними URL.
     Усі URL, домени й ідентифікатори в прикладах вигадані.
+    Локальний ClamAV обмежує файл до 2147483645 байтів (2 GiB мінус 3 байти).
 servers:
+- url: http://localhost:8080/api/v1
+  description: Локальна Docker-реалізація; HTTP лише на loopback
 - url: https://files.example.corp/api/v1
   description: Умовна адреса корпоративного розгортання (приклад, не реальний сервер)
 security:
 - SessionCookie: []
+- LocalSessionCookie: []
 tags:
 - name: Identity
   description: Сесія та користувач
@@ -317,7 +321,7 @@ paths:
                   type: integer
                   format: int64
                   minimum: 1
-                  maximum: 2147483648
+                  maximum: 2147483645
                 sha256:
                   type: string
                   pattern: ^[a-fA-F0-9]{64}$
@@ -380,7 +384,7 @@ paths:
                   type: integer
                   format: int64
                   minimum: 1
-                  maximum: 2147483648
+                  maximum: 2147483645
                 sha256:
                   type: string
                   pattern: ^[a-fA-F0-9]{64}$
@@ -1229,6 +1233,11 @@ components:
       name: __Host-fileflow_session
       description: Безпечна httpOnly SameSite=Lax cookie; встановлюється бекендом після OIDC Authorization Code
         + PKCE. Логін/колбек OIDC — браузерні маршрути, не частина JSON API.
+    LocalSessionCookie:
+      type: apiKey
+      in: cookie
+      name: fileflow_session
+      description: Лише локальний loopback HTTP-профіль; HTTPS використовує SessionCookie.
   parameters:
     Csrf:
       name: X-CSRF-Token
@@ -1346,7 +1355,7 @@ components:
                 retryable: false
                 invalidParams:
                 - name: sizeBytes
-                  reason: Максимум 2147483648 байтів
+                  reason: Максимум 2147483645 байтів
     Unauthorized:
       description: Необхідна чинна корпоративна сесія.
       content:

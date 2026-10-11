@@ -25,7 +25,9 @@ router = APIRouter()
 
 class UploadBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    sizeBytes: int = Field(ge=1, le=2147483648)
+    # ClamAV 1.5 clamps whole-file scanning to INT_MAX - 2. Reject larger
+    # reservations before clients transfer content that cannot pass scanning.
+    sizeBytes: int = Field(ge=1, le=2147483645)
     sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
     contentType: str = Field(min_length=1, max_length=200)
 

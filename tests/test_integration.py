@@ -149,12 +149,19 @@ def test_upload_limits_and_idempotency_mismatch(accounts):
     route = f'/folders/{ROOT_FOLDER}/uploads'
     body = {'name':'reserved-'+uuid4().hex, 'sizeBytes':1, 'sha256':hashlib.sha256(b'x').hexdigest(), 'contentType':'text/plain'}
     viewer.post(route, json=body, expected=403)
-    owner.post(route, json={**body, 'sizeBytes':2147483649}, expected=400)
+    owner.post(route, json={**body, 'sizeBytes':2147483646}, expected=400)
+    owner.post(route, json={**body, 'sizeBytes':2147483648}, expected=400)
     key = str(uuid4())
     a = owner.post(route, json=body, key=key, expected=201)
     assert owner.post(route, json=body, key=key, expected=201) == a
     error = owner.post(route, json={**body,'name':'changed'}, key=key, expected=409)
     assert error['code'] == 'IDEMPOTENCY_KEY_REUSED'
+    # Finish the fixture so repeated suite runs do not consume active slots.
+    signed = owner.get(f'/uploads/{a["uploadId"]}/parts/1/url')
+    stored = httpx.put(signed['url'],content=b'x',headers=signed['requiredHeaders'])
+    assert stored.status_code == 200
+    owner.complete(a,{'parts':[{'partNumber':1,'etag':stored.headers['etag']}]})
+    owner.wait_scan(a)
 
 
 def test_logout_revokes_server_session():

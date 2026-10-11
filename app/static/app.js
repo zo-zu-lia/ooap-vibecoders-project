@@ -336,7 +336,7 @@ function chooseFiles(replacement = null) {
     closeModal();
     for (const file of selected) {
       if (!file.size) { notify(`“${file.name}” is empty. Choose a file containing at least one byte.`, true); continue; }
-      if (file.size > 2147483648) { notify(`“${file.name}” is too large. The maximum file size is 2 GiB.`, true); continue; }
+      if (file.size > 2147483645) { notify(`“${file.name}” is too large. The maximum file size is 2,147,483,645 bytes (just under 2 GiB).`, true); continue; }
       const transfer = { id: uuid(), name: file.name, status: 'queued', label: 'Waiting to upload', progress: 0, cancelled: false, xhrs: new Set() };
       state.transfers.push(transfer);
       uploadQueue = uploadQueue.then(() => uploadFile(file, transfer, { folderId, replacement })).catch(error => { transfer.status = 'failed'; transfer.label = error.message; renderTransfers(); });

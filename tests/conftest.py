@@ -41,8 +41,11 @@ def validate_contract(method,route,response):
         resolver=jsonschema.RefResolver.from_schema(CONTRACT)
         if '$ref' in spec: spec=resolver.resolve(spec['$ref'])[1]
         media=response.headers.get('content-type','').split(';')[0]
+        assert not spec.get('content') or media in spec['content'], f'Undocumented content type: {media}'
         schema=spec.get('content',{}).get(media,{}).get('schema')
-        if schema: jsonschema.Draft7Validator(schema,resolver=resolver).validate(response.json())
+        if schema:
+            jsonschema.Draft7Validator(schema,resolver=resolver,
+                format_checker=jsonschema.FormatChecker()).validate(response.json())
         COVERED.add((method.upper(),path))
         return
 
