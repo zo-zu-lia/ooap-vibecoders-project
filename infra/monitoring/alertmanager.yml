@@ -1,0 +1,10 @@
+route:
+  receiver: local-dashboard
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+# Local alerts are visible at localhost:9093. No external messages are sent.
+receivers:
+  - name: local-dashboard
+
