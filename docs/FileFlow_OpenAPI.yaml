@@ -36,6 +36,8 @@ paths:
       description: Повертає локальну проєкцію корпоративної особи; не є endpoint входу.
       operationId: get_me
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Поточний користувач.
           content:
@@ -56,6 +58,8 @@ paths:
       description: Скасовує серверну сесію та очищує session cookie.
       operationId: post_logout
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '204':
           description: Сеанс завершено.
         '400':
@@ -76,6 +80,8 @@ paths:
       description: Повертає лише робочі простори, доступні через членство й корпоративні групи.
       operationId: get_workspaces
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Перелік просторів.
           content:
@@ -99,6 +105,8 @@ paths:
         об’єкти.
       operationId: get_workspaces_workspaceId_items
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Список папок та файлів.
           content:
@@ -146,6 +154,8 @@ paths:
       description: Доступ EDITOR або OWNER; назва унікальна серед дочірніх об’єктів.
       operationId: post_workspaces_workspaceId_folders
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '201':
           description: Папку створено.
           content:
@@ -195,6 +205,8 @@ paths:
       description: Керівник простору бачить чинні значення квоти та retention.
       operationId: get_workspaces_workspaceId_policy
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Поточна політика.
           content:
@@ -223,6 +235,8 @@ paths:
         уже видалених файлів не перераховується.
       operationId: put_workspaces_workspaceId_policy
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Політику оновлено.
           content:
@@ -487,6 +501,8 @@ paths:
         успіх доменної операції.
       operationId: get_uploads_uploadId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Поточний стан.
           content:
@@ -516,6 +532,8 @@ paths:
         з відповідними правами.
       operationId: get_workspaces_workspaceId_trash
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Файли в кошику.
           content:
@@ -546,6 +564,8 @@ paths:
       description: Включає latestVersionNo та downloadableVersionNo, що можуть різнитися під час сканування чи карантину.
       operationId: get_files_fileId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Метадані файла.
           content:
@@ -574,6 +594,8 @@ paths:
         з актуальної політики.
       operationId: delete_files_fileId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '204':
           description: Файл у кошику.
         '400':
@@ -601,6 +623,8 @@ paths:
       description: Включає PENDING_SCAN та REJECTED без надання URL їхнього вмісту.
       operationId: get_files_fileId_versions
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Список версій.
           content:
@@ -632,6 +656,8 @@ paths:
         expectedVersionNo в транзакції.
       operationId: post_files_fileId_versions_versionNo_restore
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '201':
           description: Нову поточну версію створено.
           content:
@@ -720,6 +746,8 @@ paths:
       description: Можливо лише до старту PURGING і лише у межах retention.
       operationId: post_files_fileId_recover
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Файл відновлено.
           content:
@@ -753,6 +781,8 @@ paths:
         файл.
       operationId: patch_files_fileId_legal_hold
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Статус legal hold оновлено.
           content:
@@ -804,6 +834,8 @@ paths:
       description: Повертає тільки явні персональні правила цього файла, без успадкованого членства/груп.
       operationId: get_files_fileId_permissions
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Прямі дозволи.
           content:
@@ -835,6 +867,8 @@ paths:
         може походити з workspace membership.
       operationId: put_files_fileId_permissions_userId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Правило доступу збережено.
           content:
@@ -896,6 +930,8 @@ paths:
       description: Видаляє лише явне файлове правило; успадкований груповий/просторовий доступ цим не скасовується.
       operationId: delete_files_fileId_permissions_userId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '204':
           description: Персональне правило видалено.
         '400':
@@ -924,6 +960,8 @@ paths:
       description: OWNER бачить список посилань без секретного bearer token; url повторно не повертається.
       operationId: get_files_fileId_share_links
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Інформація про створені посилання.
           content:
@@ -954,6 +992,8 @@ paths:
         на читання, до 7 діб.
       operationId: post_files_fileId_share_links
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '201':
           description: Внутрішнє посилання створено. URL з токеном повертається лише під час створення.
           content:
@@ -1005,6 +1045,8 @@ paths:
       description: Негайно блокує майбутні виклики resolve; вже видані URL сховища залишаються чинними до 60 с.
       operationId: delete_share_links_shareLinkId
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '204':
           description: Посилання відкликано.
         '400':
@@ -1085,6 +1127,8 @@ paths:
         не індексується.
       operationId: get_search
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Результати пошуку.
           content:
@@ -1139,6 +1183,8 @@ paths:
       description: Лише security admin; журнал має append-only записи без токенів і вмісту документів.
       operationId: get_audit_events
       responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '200':
           description: Сторінка журналу.
           content:
