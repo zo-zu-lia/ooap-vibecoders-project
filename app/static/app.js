@@ -123,7 +123,7 @@ function renderShell() {
   const searchInput = el('input', { type: 'search', placeholder: 'Search files in this workspace…', 'aria-label': 'Search filenames', minlength: '2', maxlength: '128', value: state.mode === 'search' ? state.query : '', disabled: !ws, name: 'q' });
   const search = el('form', { class: 'search', role: 'search', onsubmit: event => { event.preventDefault(); const query = searchInput.value.trim(); if (query.length >= 2) { state.query = query; run(() => changeMode('search')); } else searchInput.reportValidity(); } }, icon('search'), searchInput, el('button', { class: 'button subtle small', type: 'submit', disabled: !ws }, 'Search'));
   const initials = (state.me.displayName || state.me.email).split(/[ @.]+/).slice(0, 2).map(x => x[0]).join('').toUpperCase();
-  const account = el('div', { class: 'account' }, el('div', { class: 'avatar', 'aria-hidden': 'true' }, initials), el('div', { class: 'account-name' }, el('strong', {}, state.me.displayName || state.me.email), el('span', {}, isAdmin() ? 'Security administrator' : 'Company account')), button('Sign out', async () => { await api('/logout', { method: 'POST' }); location.reload(); }, { class: 'subtle small' }));
+  const account = el('div', { class: 'account' }, el('div', { class: 'avatar', 'aria-hidden': 'true' }, initials), el('div', { class: 'account-name' }, el('strong', {}, state.me.displayName || state.me.email), el('span', {}, isAdmin() ? 'Security administrator' : 'Company account')), button('Sign out', async () => { await api('/logout', { method: 'POST' }); for (const key of ['fileflow.transfers', 'fileflow.pendingShare', 'fileflow.pendingFile']) sessionStorage.removeItem(key); state.transfers = []; location.reload(); }, { class: 'subtle small' }));
   $('#app').replaceChildren(el('div', { class: 'shell' }, sidebar, el('div', { class: 'workspace-main' }, el('header', { class: 'topbar' }, search, account), el('main', { id: 'main', class: 'content', tabindex: '-1' }))));
 }
 async function selectWorkspace(workspace) {
@@ -363,7 +363,7 @@ function renderTransfers() {
   }));
 }
 function persistTransfers() {
-  const recoverable = state.transfers.filter(transfer => transfer.uploadId && transfer.parts && !['done', 'cancelled'].includes(transfer.status)).map(({ id, uploadId, name, parts, completionKey }) => ({ id, uploadId, name, parts, completionKey }));
+  const recoverable = state.transfers.filter(transfer => transfer.uploadId && transfer.parts && !['done', 'cancelled'].includes(transfer.status)).map(({ id, uploadId, name, parts, completionKey }) => ({ id, uploadId, name, parts, completionKey, userId: state.me.id }));
   try { sessionStorage.setItem('fileflow.transfers', JSON.stringify(recoverable)); } catch { /* Uploads still complete when browser storage is unavailable. */ }
 }
 function hashFile(file, transfer) {
@@ -494,6 +494,7 @@ function resumeTransfers() {
   try {
     const saved = JSON.parse(sessionStorage.getItem('fileflow.transfers') || '[]');
     for (const entry of saved) {
+      if (entry.userId !== state.me.id) continue;
       const transfer = { ...entry, status: 'checking', label: 'Reconnecting to your upload…', progress: 96, xhrs: new Set() };
       state.transfers.push(transfer);
       retryTransfer(transfer).catch(error => updateTransfer(transfer, 'failed', error.message));
