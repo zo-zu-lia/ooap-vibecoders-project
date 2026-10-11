@@ -1,9 +1,10 @@
 # FileFlow — SRS та архітектурна специфікація
 
-> **Тема:** Корпоративна система зберігання та поширення файлів (аналог Dropbox для **однієї компанії**).  
-> **Тип документа:** Software Requirements Specification (SRS), опис архітектури, API/error handling та concurrency patterns.  
-> **Версія документа:** 1.0 (проєктна специфікація, не опис готової реалізації).  
-> **Дата:** 11.10.2026. **Дата виконання завдання:** 29.10.2026.  
+> **Тема:** Корпоративна система зберігання та поширення файлів (аналог Dropbox для **однієї компанії**).\
+> **Тип документа:** Software Requirements Specification (SRS), архітектура, API, моделі даних, стійкості, безпеки, розгортання, аналітики та моніторингу.\
+> **Версія документа:** 1.1 (проєктна специфікація, не опис готової реалізації).\
+> **Дата:** 11.10.2026. **Дата виконання завдання:** 29.10.2026.\
+> **Другий етап — додаткові моделі:** дата виконання 10.12.2026, відповідно до умови.\
 > **API-контракт:** [`FileFlow_OpenAPI.yaml`](./FileFlow_OpenAPI.yaml), OpenAPI 3.0.3; придатний для імпорту в Swagger Editor або Swagger UI.
 
 ## Відповідність умовам завдання
@@ -14,6 +15,19 @@
 | 4. Архітектура (SPA, microservices, cloud тощо) | [Архітектура](./FileFlow_SRS/04-architecture.md), § 5 | Обґрунтована **SPA + modular monolith** архітектура, Mermaid-діаграми |
 | 5. Error Handling Design | [Error Handling](./FileFlow_SRS/05-error-handling.md), §§ 7–8 та OpenAPI YAML | **29** REST-операцій, контракти запитів/відповідей, HTTP **400, 403, 404, 409, 422, 429** і додаткові |
 | 6. Concurrency Patterns Usage | [Concurrency Patterns](./FileFlow_SRS/06-concurrency-patterns.md), § 9 | **5** різних сценаріїв, **5 Mermaid sequence diagrams**, опис патернів, інваріантів і помилок |
+
+### Додаткові моделі — другий етап
+
+| Вимога з умови | Документ | Підготовлений артефакт |
+|---|---|---|
+| Data model — ≥5 сутностей, retention, consensus/batching/streaming/consistency | [Модель даних](./FileFlow_SRS/07-data-model.md) | **16 основних сутностей**, **2 ER-діаграми**, словник, інваріанти та retention policy |
+| Resiliency model — ≥5 взаємодій, ≥3 відмови на кожну | [Стійкість до відмов](./FileFlow_SRS/08-resiliency-model.md) | **CID із 5 взаємодіями**, **RMA workbook із 15 сценаріями** та fault-injection перевірками |
+| Security model — ≥2 потоки, ≥10 загроз із mitigation | [Модель безпеки](./FileFlow_SRS/09-security-model.md) | **2 DFD**, межі довіри, STRIDE і mitigation plan для **10 загроз** |
+| Deployment model — інфраструктурна діаграма і пояснення ресурсів | [Розгортання](./FileFlow_SRS/10-deployment-model.md) | **Інфраструктурна діаграма**, одна dev-VM, ресурси, мережа, release/rollback і backup |
+| Analytics model — 10–15 функціональних метрик і ≥2 воронки | [Аналітика](./FileFlow_SRS/11-analytics-model.md) | **12 метрик** із формулами, вимірами й FR-зв'язками, **2 воронки** |
+| Monitoring & alerting — 10–15 операційних метрик, 5–10 правил | [Моніторинг і сповіщення](./FileFlow_SRS/12-monitoring-alerting-model.md) | **15 метрик**, механізми збору, **10 alert rules** із порогами та mitigation |
+
+Нові строки retention, таймаути, ресурсні бюджети й alert thresholds позначені як запропоновані налаштування. Вони не змінюють публічний контракт із 29 REST-операцій і не є результатами роботи реалізованого сервісу.
 
 ## 1. Вступ
 
@@ -57,14 +71,23 @@
 
 ## Зміст розділів
 
-Матеріал згруповано у чотири файли відповідно до пунктів 3–6 завдання. Внутрішню нумерацію розділів збережено для посилань у тексті.
+Базову специфікацію згруповано у чотири файли відповідно до пунктів 3–6 завдання. Внутрішню нумерацію цих розділів збережено для посилань у тексті.
 
 - [3. Опис продукту (Functional Specification, UML, Identity Management)](./FileFlow_SRS/03-product-description.md)
 - [4. Архітектура](./FileFlow_SRS/04-architecture.md)
 - [5. Error Handling Design](./FileFlow_SRS/05-error-handling.md)
 - [6. Concurrency Patterns Usage](./FileFlow_SRS/06-concurrency-patterns.md)
 
-Верифікацію, перелік змін і джерела наведено нижче як спільні матеріали до всіх чотирьох частин.
+Другий етап містить шість окремих моделей:
+
+- [Data model — модель даних](./FileFlow_SRS/07-data-model.md)
+- [Resiliency model — стійкість до відмов](./FileFlow_SRS/08-resiliency-model.md)
+- [Security model — модель загроз](./FileFlow_SRS/09-security-model.md)
+- [Deployment model — розгортання](./FileFlow_SRS/10-deployment-model.md)
+- [Analytics model — продуктова аналітика](./FileFlow_SRS/11-analytics-model.md)
+- [Monitoring & alerting model](./FileFlow_SRS/12-monitoring-alerting-model.md)
+
+Верифікацію, перелік змін і базові джерела наведено нижче. Кожна додаткова модель містить власні критерії перевірки й посилання на пов'язані рішення.
 
 ## 10. Верифікація та критерії готовності
 
