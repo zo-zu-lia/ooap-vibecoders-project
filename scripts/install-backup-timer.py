@@ -18,7 +18,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 User={user}
-WorkingDirectory={json.dumps(str(root))}
+WorkingDirectory={str(root).replace('%','%%')}
 ExecStart={json.dumps(str(python))} {json.dumps(str(root/'scripts/backup.py'))} create
 Nice=10
 MemoryMax=512M
@@ -40,6 +40,8 @@ for name,text in [('fileflow-backup.service',service),('fileflow-backup.timer',t
     path=root/'.local'/name
     path.write_text(text)
     subprocess.run(['sudo','install','-m','644',str(path),'/etc/systemd/system/'+name],check=True)
+subprocess.run(['sudo','systemd-analyze','verify','/etc/systemd/system/fileflow-backup.service',
+                '/etc/systemd/system/fileflow-backup.timer'],check=True)
 subprocess.run(['sudo','systemctl','daemon-reload'],check=True)
 subprocess.run(['sudo','systemctl','enable','--now','fileflow-backup.timer'],check=True)
 print('Enabled FileFlow backup timer every 12 hours. Archives: backups/; key: .local/backup.key')

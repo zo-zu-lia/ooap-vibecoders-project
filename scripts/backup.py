@@ -7,6 +7,7 @@ The drill never overwrites the live database or bucket.
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import io
 import json
@@ -33,6 +34,19 @@ MAGIC = b'FILEFLOW-BACKUP-1\n'
 
 def command(args, **kwargs):
     return subprocess.run(COMPOSE+args, check=True, **kwargs)
+
+
+def resume_services(services):
+    if not services: return
+    command(['start',*services],stdout=subprocess.DEVNULL)
+    deadline=time.monotonic()+120
+    while time.monotonic()<deadline:
+        output=command(['ps','--format','json',*services],capture_output=True).stdout.decode()
+        states=[json.loads(line) for line in output.splitlines() if line.strip()]
+        healthy={state['Service'] for state in states if state.get('Health')=='healthy'}
+        if set(services)<=healthy: return
+        time.sleep(1)
+    raise RuntimeError('Application health did not recover after backup maintenance')
 
 
 def env():
@@ -138,7 +152,7 @@ def create():
                 writer.finish()
             partial.rename(destination)
     finally:
-        if resume: command(['start',*resume],stdout=subprocess.DEVNULL)
+        resume_services(resume)
         partial.unlink(missing_ok=True)
     verify(destination)
     (LOCAL/'backup-status.json').write_text(json.dumps({'snapshotAt':snapshot,'verifiedAt':datetime.now(timezone.utc).isoformat(),'archive':str(destination),'seconds':time.monotonic()-started}))
@@ -250,7 +264,12 @@ if __name__=='__main__':
     p.add_argument('action',choices=['create','verify','drill'])
     p.add_argument('archive',type=Path,nargs='?')
     args=p.parse_args()
-    if args.action=='create': create()
+    if args.action=='create':
+        # A scheduled run and a manual run must not overlap maintenance windows.
+        with (LOCAL/'backup.lock').open('a') as lock:
+            try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError: raise SystemExit('A FileFlow backup is already running.')
+            create()
     else:
         if not args.archive: p.error('archive is required for verify/drill')
         (verify if args.action=='verify' else drill)(args.archive.resolve())
