@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from conftest import ORIGIN, API
+from conftest import ORIGIN, API, validate_contract
 
 pytestmark = pytest.mark.integration
 WORKSPACE = '00000000-0000-4000-8000-000000000010'
@@ -104,7 +104,13 @@ def test_permissions_search_and_addressed_sharing(accounts):
     fid = owner.upload(name=unique+'.txt')['fileId']
     finance.get(f'/files/{fid}', expected=403)
     admin.get(f'/files/{fid}/download-link', expected=403)
-    finance.get('/search', params={'workspaceId':WORKSPACE,'q':unique}, expected=403)
+    # Other demo files may already be shared with Finance. In that case search
+    # is allowed, but it must still hide this newly created, unshared file.
+    hidden = finance.client.get('/api/v1/search',params={'workspaceId':WORKSPACE,'q':unique})
+    assert hidden.status_code in (200,403)
+    validate_contract('GET','/search',hidden)
+    if hidden.status_code == 200:
+        assert hidden.json()['items'] == []
     owner.request('PUT', f'/files/{fid}/permissions/{FINANCE_USER}', json={'role':'VIEWER'})
     assert finance.get(f'/files/{fid}/download-link')['versionNo'] == 1
     assert fid in [x['id'] for x in finance.get('/search', params={'workspaceId':WORKSPACE,'q':unique})['items']]
