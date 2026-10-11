@@ -1,6 +1,7 @@
 """Security invariants checked against the running Docker deployment and real OIDC."""
 import json
 import subprocess
+import textwrap
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,6 +16,7 @@ FINANCE = '00000000-0000-4000-8000-000000000005'
 
 def database_check(source):
     """Run bounded checks inside the private service network; never publish PostgreSQL."""
+    source = 'from app.db import close_pool\ntry:\n' + textwrap.indent(source, '    ') + '\nfinally:\n    close_pool()\n'
     result = subprocess.run([str(ROOT/'scripts/compose.sh'),'exec','-T','api','python','-c',source],
                             check=True,text=True,capture_output=True,timeout=30)
     return json.loads(result.stdout.strip()) if result.stdout.strip() else None

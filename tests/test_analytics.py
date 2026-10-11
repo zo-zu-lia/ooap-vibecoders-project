@@ -1,6 +1,7 @@
 """Mature cohort arithmetic, privacy boundaries, and event deduplication."""
 import json
 import subprocess
+import textwrap
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,12 @@ from conftest import ROOT
 pytestmark=pytest.mark.integration
 WORKSPACE='00000000-0000-4000-8000-000000000010'
 FINANCE='00000000-0000-4000-8000-000000000020'
+
+
+def remote_python(source):
+    source = 'from app.db import close_pool\ntry:\n' + textwrap.indent(source, '    ') + '\nfinally:\n    close_pool()\n'
+    return subprocess.run([str(ROOT/'scripts/compose.sh'),'exec','-T','api','python','-c',source],
+                          text=True,capture_output=True,timeout=30)
 
 
 def test_analytics_access_and_incomplete_observation_windows(accounts):
@@ -75,8 +82,7 @@ with connection() as conn:
     conn.rollback()
 print(json.dumps(result))
 '''
-    response=subprocess.run([str(ROOT/'scripts/compose.sh'),'exec','-T','api','python','-c',source],
-                             text=True,capture_output=True,timeout=30)
+    response=remote_python(source)
     assert response.returncode==0,response.stderr
     result=json.loads(response.stdout)
     metrics={m['id']:m for m in result['metrics']}
@@ -90,9 +96,7 @@ print(json.dumps(result))
 
 def test_operational_metrics_keep_labels_bounded(accounts):
     accounts['owner'].get(f'/workspaces/{WORKSPACE}/items')
-    result=subprocess.run([str(ROOT/'scripts/compose.sh'),'exec','-T','api','python','-c',
-        "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())"],
-        text=True,capture_output=True,timeout=30)
+    result=remote_python("import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())")
     assert result.returncode==0,result.stderr
     metrics=result.stdout
     assert 'fileflow_http_requests_total' in metrics
