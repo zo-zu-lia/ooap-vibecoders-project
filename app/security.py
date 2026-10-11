@@ -310,6 +310,7 @@ def get_actor(request: Request):
                    JOIN users u ON u.id=s.user_id WHERE s.id_hash=%s FOR UPDATE OF s''',(digest(raw),)).fetchone()
         if not session or session['revoked_at'] or session['expires_at']<=now() or session['last_seen_at']<now()-timedelta(minutes=30) or session['status']!='ACTIVE':
             raise Problem(401,'UNAUTHENTICATED','Your session expired. Please sign in again.')
+        request.state.actor_id=session['user_id']
         if request.method not in ('GET','HEAD','OPTIONS'):
             origin = request.headers.get('origin')
             if origin and origin != settings.app_origin:

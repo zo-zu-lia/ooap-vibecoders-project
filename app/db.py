@@ -1,4 +1,4 @@
-"""Short-lived PostgreSQL connections with explicit transaction boundaries."""
+"""Bounded PostgreSQL connections with explicit transaction boundaries."""
 from contextlib import contextmanager
 import os
 import threading

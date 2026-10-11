@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
-    database_url: str = os.getenv('DATABASE_URL', 'postgresql://fileflow:fileflow@db/fileflow')
+    database_url: str = os.getenv('DATABASE_URL', 'postgresql://fileflow_app@postgres/fileflow')
     app_origin: str = os.getenv('APP_ORIGIN', 'http://localhost:8080').rstrip('/')
     oidc_issuer: str = os.getenv('OIDC_ISSUER', 'http://localhost:8080/dex').rstrip('/')
     oidc_internal_url: str = os.getenv('OIDC_INTERNAL_URL', 'http://dex:5556/dex').rstrip('/')
