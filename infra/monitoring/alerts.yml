@@ -1,0 +1,76 @@
+groups:
+  - name: fileflow
+    rules:
+      - alert: A01ApiUnavailable
+        expr: probe_success{job="edge"} == 0 or absent(probe_success{job="edge"})
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: FileFlow is unavailable
+          action: Check proxy, API, PostgreSQL and storage health; restore the failed dependency.
+      - alert: A02MetadataSlowOrFailing
+        expr: |
+          (histogram_quantile(0.95, sum by (le) (rate(fileflow_http_request_duration_seconds_bucket{route_group="browse_search"}[5m]))) > 0.7
+          or sum(rate(fileflow_http_requests_total{status_class="5xx"}[5m])) / sum(rate(fileflow_http_requests_total[5m])) > 0.01)
+          and sum(increase(fileflow_http_requests_total[5m])) >= 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Metadata requests are degraded
+          action: Inspect database waits and recent changes; reduce background concurrency or roll back.
+      - alert: A03DependencyFailures
+        expr: sum by (dependency) (rate(fileflow_dependency_requests_total{result="failure"}[5m])) / sum by (dependency) (rate(fileflow_dependency_requests_total[5m])) >= 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: A required dependency is failing
+          action: Check identity provider, storage or antivirus; keep unverified files quarantined.
+      - alert: A04WorkerStalled
+        expr: fileflow_jobs_oldest_unfinished_age_seconds > 900 or increase(fileflow_jobs_failed_total[15m]) > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: A background job needs attention
+          action: Inspect failed jobs as security admin; repair the dependency before retrying.
+      - alert: A05ResourcePressure
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.85 or (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 0.8
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Host resource pressure
+          action: Stop concurrent builds, reduce scans or increase the host memory budget.
+      - alert: A06DiskPressure
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) > 0.8 or (1 - node_filesystem_files_free / node_filesystem_files) > 0.8
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Persistent storage is filling up
+          action: Inspect retention and confirmed orphan cleanup; never delete committed objects manually.
+      - alert: A07DatabasePressure
+        expr: fileflow_db_connections / fileflow_db_connection_budget > 0.8 or fileflow_db_lock_wait_seconds > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Database connections or locks are saturated
+          action: Inspect blockers and connection use; preserve authorization and version locks.
+      - alert: A08BackupStale
+        expr: time() - fileflow_last_verified_recovery_point_timestamp_seconds > 86400 or absent(fileflow_last_verified_recovery_point_timestamp_seconds)
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: No recent verified recovery set
+          action: Run the encrypted backup and restore drill; verify the archive and original encryption key.
+      - alert: A09TlsExpiring
+        expr: probe_ssl_earliest_cert_expiry - time() < 1209600
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: HTTPS certificate expires within 14 days
+          action: Renew and verify the certificate. Local HTTP has no TLS metric.
+      - alert: A10ScrapeMissing
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Monitoring cannot reach a target
+          action: Check target and exporter processes. Full host loss requires an independent external monitor.

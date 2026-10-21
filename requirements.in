@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+psycopg[binary,pool]
+httpx
+PyJWT[crypto]
+cryptography
+boto3
+pydantic
+prometheus-client
+
